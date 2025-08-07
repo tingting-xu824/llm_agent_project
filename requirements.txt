@@ -1,0 +1,7 @@
+openai>=1.10.0
+openai-agents>=0.1.0
+sentence-transformers>=5.0.0
+faiss-cpu>=1.11.0
+tqdm
+python-dotenv
+numpy==1.26.4
