@@ -33,10 +33,10 @@ async def post_agent(input: ChatInput, request: Request):
     # Select agent and model based on mode
     if input.mode == "eval":
         assigned_agent = agent1 if int(user_id[-1]) % 2 == 1 else agent2
-        model = "gpt-3.5-turbo"
+        model = "o3"
     elif input.mode == "chat":
         assigned_agent = chatbot_agent
-        model = "gpt-4o"
+        model = "gpt-4o-mini"
     else:
         raise HTTPException(status_code=400, detail="Invalid mode")
 
