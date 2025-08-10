@@ -1,0 +1,337 @@
+from sqlalchemy import create_engine, Column, Integer, String, Date, DateTime, Text, Float
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.sql import func
+import os
+from typing import Optional, Dict, List
+from datetime import datetime, date
+
+# Database configuration
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+# Create SQLAlchemy engine
+engine = create_engine(DATABASE_URL)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+# Create base class for models
+Base = declarative_base()
+
+class User(Base):
+    """User model for database operations"""
+    __tablename__ = "user"
+    
+    user_id = Column(Integer, primary_key=True, index=True)
+    email = Column(String, unique=True, index=True, nullable=False)
+    dob = Column(Date, nullable=False)
+    agent_type = Column(Integer, nullable=False)
+    gender = Column(String, nullable=False)
+    education_field = Column(String)
+    education_level = Column(String)
+    disability_knowledge = Column(String, nullable=False)
+    genai_course_exp = Column(String, nullable=False)
+    token = Column(String, unique=True, index=True)
+    registration_time = Column(DateTime, default=func.now())
+
+class Conversation(Base):
+    """Conversation model for storing chat messages"""
+    __tablename__ = "conversation"
+    
+    conversation_id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, nullable=False, index=True)
+    message_type = Column(String, nullable=False)  # "USER" or "ASSISTANT" (existing)
+    content = Column(Text, nullable=False)  # The actual message content
+    timestamp = Column(DateTime, default=func.now())
+    character_count = Column(Integer)
+    sequence_number = Column(Integer)
+    # New columns (will be added by SQL script)
+    role = Column(String)  # "user" or "assistant" (new)
+    mode = Column(String)  # "chat" or "eval" (new)
+    agent_type = Column(Integer)  # Which agent was used (new)
+
+class MemoryVector(Base):
+    """Memory vector model for RAG functionality"""
+    __tablename__ = "memory_vectors"
+    
+    memory_id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, nullable=False, index=True)
+    memory_type = Column(String, nullable=False)  # Type of memory
+    source_conversations = Column(Text)  # Source conversation IDs
+    memory_content = Column(Text, nullable=False)  # The text content (existing)
+    embedding = Column(Text, nullable=False)  # JSON string of embedding vector
+    created_at = Column(DateTime, default=func.now())
+    memory_metadata = Column(Text)  # JSON string of metadata
+    # New column (will be added by SQL script)
+    content = Column(Text)  # Alias for memory_content (new)
+
+class DatabaseManager:
+    """Database manager for user operations"""
+    
+    def __init__(self):
+        self.db = SessionLocal()
+    
+    def __enter__(self):
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.db.close()
+    
+    def get_user_by_token(self, token: str) -> Optional[Dict]:
+        """Get user by token using ORM"""
+        try:
+            user = self.db.query(User).filter(User.token == token).first()
+            if user:
+                return {
+                    "user_id": user.user_id,
+                    "email": user.email,
+                    "dob": user.dob,
+                    "gender": user.gender,
+                    "education_field": user.education_field,
+                    "education_level": user.education_level,
+                    "disability_knowledge": user.disability_knowledge,
+                    "genai_course_exp": user.genai_course_exp,
+                    "token": user.token,
+                    "registration_time": user.registration_time
+                }
+            return None
+        except Exception as e:
+            print(f"Error getting user by token: {e}")
+            return None
+    
+    def get_user_by_email_and_dob(self, email: str, date_of_birth: date) -> Optional[Dict]:
+        """Get user by email and date of birth using ORM"""
+        try:
+            user = self.db.query(User).filter(
+                User.email == email,
+                User.dob == date_of_birth
+            ).first()
+            
+            if user:
+                return {
+                    "user_id": user.user_id,
+                    "email": user.email,
+                    "dob": user.dob,
+                    "gender": user.gender,
+                    "education_field": user.education_field,
+                    "education_level": user.education_level,
+                    "disability_knowledge": user.disability_knowledge,
+                    "genai_course_exp": user.genai_course_exp,
+                    "token": user.token,
+                    "registration_time": user.registration_time
+                }
+            return None
+        except Exception as e:
+            print(f"Error getting user by email and DOB: {e}")
+            return None
+    
+    def create_user(self, user_data: Dict) -> Optional[int]:
+        """Create new user using ORM"""
+        try:
+            new_user = User(**user_data)
+            self.db.add(new_user)
+            self.db.commit()
+            self.db.refresh(new_user)
+            return new_user.user_id
+        except Exception as e:
+            self.db.rollback()
+            print(f"Error creating user: {e}")
+            return None
+    
+    def update_user_login_time(self, user_id: int):
+        """Update user's last login time using ORM"""
+        try:
+            user = self.db.query(User).filter(User.user_id == user_id).first()
+            if user:
+                user.registration_time = datetime.utcnow()
+                self.db.commit()
+        except Exception as e:
+            self.db.rollback()
+            print(f"Error updating user login time: {e}")
+    
+    def get_user_profile(self, user_id: int) -> Optional[Dict]:
+        """Get complete user profile using ORM"""
+        try:
+            user = self.db.query(User).filter(User.user_id == user_id).first()
+            if user:
+                return {
+                    "user_id": user.user_id,
+                    "email": user.email,
+                    "dob": user.dob,
+                    "gender": user.gender,
+                    "education_field": user.education_field,
+                    "education_level": user.education_level,
+                    "disability_knowledge": user.disability_knowledge,
+                    "genai_course_exp": user.genai_course_exp,
+                    "token": user.token,
+                    "registration_time": user.registration_time
+                }
+            return None
+        except Exception as e:
+            print(f"Error getting user profile: {e}")
+            return None
+    
+    def save_conversation_message(self, user_id: int, message: str, role: str, mode: str, agent_type: int) -> Optional[int]:
+        """Save a conversation message to database"""
+        try:
+            # Get the next sequence number for this user
+            last_conversation = self.db.query(Conversation).filter(
+                Conversation.user_id == user_id
+            ).order_by(Conversation.sequence_number.desc()).first()
+            
+            next_sequence = 1 if not last_conversation else last_conversation.sequence_number + 1
+            
+            # Map role to message_type format
+            message_type = "USER" if role == "user" else "ASSISTANT"
+            
+            conversation = Conversation(
+                user_id=user_id,
+                message_type=message_type,  # "USER" or "ASSISTANT"
+                content=message,
+                character_count=len(message),
+                sequence_number=next_sequence,
+                role=role,  # "user" or "assistant"
+                mode=mode,  # "chat" or "eval"
+                agent_type=agent_type
+            )
+            self.db.add(conversation)
+            self.db.commit()
+            self.db.refresh(conversation)
+            return conversation.conversation_id
+        except Exception as e:
+            self.db.rollback()
+            print(f"Error saving conversation message: {e}")
+            return None
+    
+    def get_user_conversations(self, user_id: int, limit: int = 50) -> List[Dict]:
+        """Get user's conversation history from database"""
+        try:
+            conversations = self.db.query(Conversation).filter(
+                Conversation.user_id == user_id
+            ).order_by(Conversation.timestamp.desc()).limit(limit).all()
+            
+            return [
+                {
+                    "conversation_id": conv.conversation_id,
+                    "content": conv.content,
+                    "message_type": conv.message_type,
+                    "role": conv.role or ("user" if conv.message_type == "USER" else "assistant"),
+                    "mode": conv.mode or "chat",
+                    "timestamp": conv.timestamp,
+                    "character_count": conv.character_count,
+                    "sequence_number": conv.sequence_number,
+                    "agent_type": conv.agent_type
+                }
+                for conv in conversations
+            ]
+        except Exception as e:
+            print(f"Error getting user conversations: {e}")
+            return []
+    
+    def save_memory_vector(self, user_id: int, content: str, embedding: List[float], metadata: Dict = None) -> Optional[int]:
+        """Save a memory vector for RAG functionality"""
+        try:
+            memory_vector = MemoryVector(
+                user_id=user_id,
+                memory_type="conversation_memory",
+                memory_content=content,
+                content=content,  # Also set the new content field
+                embedding=json.dumps(embedding),
+                memory_metadata=json.dumps(metadata) if metadata else None
+            )
+            self.db.add(memory_vector)
+            self.db.commit()
+            self.db.refresh(memory_vector)
+            return memory_vector.memory_id
+        except Exception as e:
+            self.db.rollback()
+            print(f"Error saving memory vector: {e}")
+            return None
+    
+    def get_relevant_memories(self, user_id: int, query_embedding: List[float], top_k: int = 5) -> List[Dict]:
+        """Get relevant memories using vector similarity search"""
+        try:
+            import json
+            import numpy as np
+            from sklearn.metrics.pairwise import cosine_similarity
+            
+            # Get all memory vectors for the user
+            memory_vectors = self.db.query(MemoryVector).filter(
+                MemoryVector.user_id == user_id
+            ).all()
+            
+            if not memory_vectors:
+                return []
+            
+            # Calculate similarities
+            similarities = []
+            for mv in memory_vectors:
+                try:
+                    embedding = json.loads(mv.embedding)
+                    similarity = cosine_similarity([query_embedding], [embedding])[0][0]
+                    similarities.append((similarity, mv))
+                except Exception as e:
+                    print(f"Error calculating similarity: {e}")
+                    continue
+            
+            # Sort by similarity and return top_k
+            similarities.sort(key=lambda x: x[0], reverse=True)
+            top_memories = similarities[:top_k]
+            
+            return [
+                {
+                    "memory_id": mv.memory_id,
+                    "content": mv.content or mv.memory_content,  # Use new field if available, fallback to old
+                    "metadata": json.loads(mv.memory_metadata) if mv.memory_metadata else {},
+                    "similarity": float(similarity),
+                    "created_at": mv.created_at
+                }
+                for similarity, mv in top_memories
+            ]
+        except Exception as e:
+            print(f"Error getting relevant memories: {e}")
+            return []
+
+# Convenience functions
+def get_user_by_token(token: str) -> Optional[Dict]:
+    """Get user by token"""
+    with DatabaseManager() as db:
+        return db.get_user_by_token(token)
+
+def get_user_by_email_and_dob(email: str, date_of_birth: date) -> Optional[Dict]:
+    """Get user by email and date of birth"""
+    with DatabaseManager() as db:
+        return db.get_user_by_email_and_dob(email, date_of_birth)
+
+def create_user(user_data: Dict) -> Optional[int]:
+    """Create new user"""
+    with DatabaseManager() as db:
+        return db.create_user(user_data)
+
+def update_user_login_time(user_id: int):
+    """Update user's last login time"""
+    with DatabaseManager() as db:
+        db.update_user_login_time(user_id)
+
+def get_user_profile(user_id: int) -> Optional[Dict]:
+    """Get complete user profile"""
+    with DatabaseManager() as db:
+        return db.get_user_profile(user_id)
+
+def save_conversation_message(user_id: int, message: str, role: str, mode: str, agent_type: int) -> Optional[int]:
+    """Save a conversation message"""
+    with DatabaseManager() as db:
+        return db.save_conversation_message(user_id, message, role, mode, agent_type)
+
+def get_user_conversations(user_id: int, limit: int = 50) -> List[Dict]:
+    """Get user's conversation history"""
+    with DatabaseManager() as db:
+        return db.get_user_conversations(user_id, limit)
+
+def save_memory_vector(user_id: int, content: str, embedding: List[float], metadata: Dict = None) -> Optional[int]:
+    """Save a memory vector"""
+    with DatabaseManager() as db:
+        return db.save_memory_vector(user_id, content, embedding, metadata)
+
+def get_relevant_memories(user_id: int, query_embedding: List[float], top_k: int = 5) -> List[Dict]:
+    """Get relevant memories"""
+    with DatabaseManager() as db:
+        return db.get_relevant_memories(user_id, query_embedding, top_k)

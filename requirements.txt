@@ -1,0 +1,24 @@
+# Core AI and ML dependencies
+openai>=1.10.0
+openai-agents>=0.1.0
+sentence-transformers>=5.0.0
+faiss-cpu>=1.11.0
+numpy==1.26.4
+scikit-learn>=1.0.0
+
+# Web framework and API dependencies
+fastapi>=0.100.0
+uvicorn>=0.20.0
+python-multipart>=0.0.6
+email-validator>=2.0.0
+
+# Database dependencies
+psycopg2-binary>=2.9.0
+sqlalchemy>=2.0.0
+
+# Caching and session management
+redis>=4.5.0
+
+# Utility dependencies
+python-dotenv>=1.0.0
+tqdm>=4.65.0
