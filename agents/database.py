@@ -16,6 +16,9 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 # Create base class for models
 Base = declarative_base()
 
+# Import json for database operations
+import json
+
 class User(Base):
     """User model for database operations"""
     __tablename__ = "user"
