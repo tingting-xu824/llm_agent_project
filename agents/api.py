@@ -2,7 +2,7 @@ from fastapi import FastAPI, Request, HTTPException, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, EmailStr, validator
 from datetime import datetime, timedelta, date
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 import redis
 import json
 import os
@@ -104,6 +104,19 @@ class UserLogin(BaseModel):
     email: EmailStr
     date_of_birth: date
 
+class InterviewInit(BaseModel):
+    """Interview initialization model"""
+    user_id: int
+
+class InterviewChat(BaseModel):
+    """Interview chat model"""
+    user_id: int
+    user_message: str
+
+class InterviewHistory(BaseModel):
+    """Interview history request model"""
+    user_id: int
+
 async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> Dict:
     """Dependency to get current user from token"""
     token = credentials.credentials
@@ -193,14 +206,15 @@ async def register_user(user_data: UserRegistration):
         # Generate a UUID token
         token = str(uuid.uuid4())
         
-        # Assign agent_type based on user data (1 or 2)
-        agent_type = 1 if user_data.gender in ['male', 'female'] else 2
+        # Assign agent_type based on user ID for load balancing (will be set after user creation)
+        # We'll set this after getting the user_id
+        agent_type = None
         
-        # Prepare user data for database
+        # Prepare user data for database (without agent_type initially)
         db_user_data = {
             "email": user_data.email,
             "dob": user_data.date_of_birth,
-            "agent_type": agent_type,
+            "agent_type": 1,  # Temporary value, will be updated
             "gender": user_data.gender,
             "education_field": user_data.field_of_education,
             "education_level": user_data.current_level_of_education,
@@ -214,6 +228,13 @@ async def register_user(user_data: UserRegistration):
         
         if not user_id:
             raise HTTPException(status_code=400, detail="Registration failed - duplicate data")
+        
+        # Assign agent_type based on user ID for load balancing
+        agent_type = 1 if int(str(user_id)[-1]) % 2 == 1 else 2
+        
+        # Update the user's agent_type in the database
+        from agents.database import update_user_agent_type
+        update_user_agent_type(user_id, agent_type)
         
         return {
             "user_id": user_id,
@@ -407,3 +428,191 @@ async def get_user_profile_endpoint(current_user: Dict = Depends(get_current_use
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get profile: {str(e)}")
+
+# Interview-related storage (in-memory for now, can be moved to database later)
+interview_sessions = {}
+interview_chat_history = {}
+
+def get_interview_session_key(user_id: int) -> str:
+    """Generate key for interview session"""
+    return f"interview_session:{user_id}"
+
+def get_interview_history_key(user_id: int) -> str:
+    """Generate key for interview chat history"""
+    return f"interview_history:{user_id}"
+
+def get_interview_session(user_id: int) -> Dict:
+    """Get interview session for user"""
+    if redis_client:
+        try:
+            session_key = get_interview_session_key(user_id)
+            session_data = redis_client.get(session_key)
+            if session_data:
+                return json.loads(session_data)
+        except Exception as e:
+            print(f"Error getting interview session from Redis: {e}")
+    
+    return interview_sessions.get(user_id, {})
+
+def save_interview_session(user_id: int, session_data: Dict):
+    """Save interview session for user"""
+    if redis_client:
+        try:
+            session_key = get_interview_session_key(user_id)
+            redis_client.setex(session_key, 3600, json.dumps(session_data))  # 1 hour expiration
+            return
+        except Exception as e:
+            print(f"Error saving interview session to Redis: {e}")
+    
+    interview_sessions[user_id] = session_data
+
+def get_interview_chat_history(user_id: int) -> List[Dict]:
+    """Get interview chat history for user"""
+    if redis_client:
+        try:
+            history_key = get_interview_history_key(user_id)
+            history_data = redis_client.get(history_key)
+            if history_data:
+                return json.loads(history_data)
+        except Exception as e:
+            print(f"Error getting interview history from Redis: {e}")
+    
+    return interview_chat_history.get(user_id, [])
+
+def save_interview_chat_history(user_id: int, history: List[Dict]):
+    """Save interview chat history for user"""
+    if redis_client:
+        try:
+            history_key = get_interview_history_key(user_id)
+            redis_client.setex(history_key, 86400, json.dumps(history))  # 24 hour expiration
+            return
+        except Exception as e:
+            print(f"Error saving interview history to Redis: {e}")
+    
+    interview_chat_history[user_id] = history
+
+def add_interview_message(user_id: int, role: str, content: str):
+    """Add a message to interview chat history"""
+    history = get_interview_chat_history(user_id)
+    message = {
+        "role": role,
+        "content": content,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+    history.append(message)
+    save_interview_chat_history(user_id, history)
+
+@app.post("/interview/init")
+async def initialize_interview(request: InterviewInit, current_user: Dict = Depends(get_current_user)):
+    """Initialize a chat session for an interview"""
+    try:
+        user_id = request.user_id
+        
+        # Verify the user_id matches the authenticated user
+        if user_id != current_user["user_id"]:
+            raise HTTPException(status_code=403, detail="User ID mismatch")
+        
+        # Check if user exists
+        user_profile = get_user_profile(user_id)
+        if not user_profile:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Initialize interview session
+        session_data = {
+            "user_id": user_id,
+            "started_at": datetime.utcnow().isoformat(),
+            "status": "active"
+        }
+        save_interview_session(user_id, session_data)
+        
+        # Create initial interview question
+        initial_question = "Hello! I'm here to conduct an interview with you about your experience with our AI agents. Let's start with a simple question: How would you rate your overall experience with the AI agents you interacted with today? Please rate it on a scale of 1-10, where 1 is very poor and 10 is excellent."
+        
+        # Add initial question to chat history
+        add_interview_message(user_id, "assistant", initial_question)
+        
+        return {
+            "response": initial_question,
+            "interview_id": user_id  # 使用user_id作为interview标识
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to initialize interview: {str(e)}")
+
+@app.post("/interview/chat")
+async def interview_chat(request: InterviewChat, current_user: Dict = Depends(get_current_user)):
+    """Send a user message to the Interview Bot and receive the assistant's reply"""
+    try:
+        user_id = request.user_id
+        user_message = request.user_message
+        
+        # Verify the user_id matches the authenticated user
+        if user_id != current_user["user_id"]:
+            raise HTTPException(status_code=403, detail="User ID mismatch")
+        
+        # Check if interview session exists
+        session = get_interview_session(user_id)
+        if not session or session.get("status") != "active":
+            raise HTTPException(status_code=400, detail="No active interview session found. Please initialize the interview first.")
+        
+        # Add user message to history
+        add_interview_message(user_id, "user", user_message)
+        
+        # Get chat history for context
+        history = get_interview_chat_history(user_id)
+        
+        # Generate interview bot response based on context
+        # This is a simple interview bot - you can enhance it with more sophisticated logic
+        if len(history) <= 2:  # First exchange
+            response = "Thank you for your rating! Could you tell me more about what aspects of the AI agents you found most helpful or most challenging?"
+        elif len(history) <= 4:  # Second exchange
+            response = "That's very helpful feedback. Did you notice any differences between the different AI agents you interacted with? If so, what were they?"
+        elif len(history) <= 6:  # Third exchange
+            response = "Interesting! One more question: How likely are you to use AI agents like these in the future, and what would make you more likely to use them?"
+        elif len(history) <= 8:  # Fourth exchange
+            response = "Thank you for sharing your thoughts! Is there anything else you'd like to tell us about your experience or any suggestions for improvement?"
+        else:  # Final exchange
+            response = "Thank you so much for participating in this interview! Your feedback is very valuable to us. Is there anything else you'd like to add before we conclude?"
+            # Mark session as completed
+            session["status"] = "completed"
+            session["completed_at"] = datetime.utcnow().isoformat()
+            save_interview_session(user_id, session)
+        
+        # Add assistant response to history
+        add_interview_message(user_id, "assistant", response)
+        
+        return {
+            "response": response
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to process interview chat: {str(e)}")
+
+@app.post("/interview/history")
+async def get_interview_history(request: InterviewHistory, current_user: Dict = Depends(get_current_user)):
+    """Retrieve the chat history for the interview"""
+    try:
+        user_id = request.user_id
+        
+        # Verify the user_id matches the authenticated user
+        if user_id != current_user["user_id"]:
+            raise HTTPException(status_code=403, detail="User ID mismatch")
+        
+        # Get interview chat history
+        chat_history = get_interview_chat_history(user_id)
+        
+        if not chat_history:
+            raise HTTPException(status_code=404, detail="No interview history found for this user")
+        
+        return {
+            "chat_history": chat_history
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get interview history: {str(e)}")
