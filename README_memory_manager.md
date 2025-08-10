@@ -159,18 +159,6 @@ CREATE TABLE memory_vectors (
 );
 ```
 
-### conversation table
-```sql
-CREATE TABLE conversation (
-    conversation_id SERIAL PRIMARY KEY,
-    user_id INTEGER NOT NULL,
-    message_type VARCHAR(20) NOT NULL,  -- 'user_input' or 'agent_response'
-    content TEXT NOT NULL,
-    timestamp TIMESTAMP DEFAULT NOW(),
-    sequence_number INTEGER
-);
-```
-
 ## 🔄 Complete Usage Flow
 
 ### 1. Memory Creation Flow
