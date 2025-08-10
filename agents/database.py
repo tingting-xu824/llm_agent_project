@@ -62,7 +62,7 @@ class MemoryVector(Base):
     memory_content = Column(Text, nullable=False)  # The text content (existing)
     embedding = Column(Text, nullable=False)  # JSON string of embedding vector
     created_at = Column(DateTime, default=func.now())
-    memory_metadata = Column(Text)  # JSON string of metadata
+    vector_metadata = Column(Text)  # JSON string of metadata
     # New column (will be added by SQL script)
     content = Column(Text)  # Alias for memory_content (new)
 
@@ -238,7 +238,7 @@ class DatabaseManager:
                 memory_content=content,
                 content=content,  # Also set the new content field
                 embedding=json.dumps(embedding),
-                memory_metadata=json.dumps(metadata) if metadata else None
+                vector_metadata=json.dumps(metadata) if metadata else None
             )
             self.db.add(memory_vector)
             self.db.commit()
@@ -283,7 +283,7 @@ class DatabaseManager:
                 {
                     "memory_id": mv.memory_id,
                     "content": mv.content or mv.memory_content,  # Use new field if available, fallback to old
-                    "metadata": json.loads(mv.memory_metadata) if mv.memory_metadata else {},
+                    "metadata": json.loads(mv.vector_metadata) if mv.vector_metadata else {},
                     "similarity": float(similarity),
                     "created_at": mv.created_at
                 }
