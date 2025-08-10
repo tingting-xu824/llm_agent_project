@@ -17,7 +17,7 @@ from agents.database import (
     save_conversation_message,
     get_user_conversations
 )
-from agents.memory_system import memory_system
+from .memory_system import memory_system
 
 app = FastAPI()
 security = HTTPBearer()

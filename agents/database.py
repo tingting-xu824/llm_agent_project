@@ -57,14 +57,12 @@ class MemoryVector(Base):
     
     memory_id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, nullable=False, index=True)
-    memory_type = Column(String, nullable=False)  # Type of memory
+    memory_type = Column(String(50), nullable=False)  # Type of memory with constraint
     source_conversations = Column(Text)  # Source conversation IDs
-    memory_content = Column(Text, nullable=False)  # The text content (existing)
-    embedding = Column(Text, nullable=False)  # JSON string of embedding vector
+    memory_content = Column(Text, nullable=False)  # The text content
+    embedding = Column(Text, nullable=False)  # VECTOR(1536) type for pgvector extension
     created_at = Column(DateTime, default=func.now())
-    vector_metadata = Column(Text)  # JSON string of metadata
-    # New column (will be added by SQL script)
-    content = Column(Text)  # Alias for memory_content (new)
+    metadata = Column(Text)  # JSONB metadata
 
 class DatabaseManager:
     """Database manager for user operations"""
