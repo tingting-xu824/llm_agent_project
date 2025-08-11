@@ -44,7 +44,7 @@ class IdeaEvaluation(Base):
     __tablename__ = "idea_evaluation"
     
     id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(Integer,ForeignKey("users.id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("user.user_id"), nullable=False)
     problem = Column(Text, nullable=False)
     solution = Column(Text, nullable=False)
     ai_feedback = Column(Text)
@@ -316,17 +316,17 @@ class DatabaseManager:
             print(f"Error getting relevant memories: {e}")
             return []
 
-    def get_evaluation_data(self, user_id: int, round: int | None = None):
+    def get_evaluation_data(self, user_id: int, round: str | None = None):
         try:
-            if round:
-                eval_data = self.db.query(IdeaEvaluation).where(IdeaEvaluation.user_id == user_id)
+            if round is None:
+                eval_data = self.db.query(IdeaEvaluation).filter(IdeaEvaluation.user_id == user_id).all()
                 return eval_data
             else:
-                eval_data = self.db.query(IdeaEvaluation).where(IdeaEvaluation.user_id == user_id, IdeaEvaluation.round == round)
+                eval_data = self.db.query(IdeaEvaluation).filter(IdeaEvaluation.user_id == user_id, IdeaEvaluation.round == round).all()
                 return eval_data
 
         except Exception as e:
-            print(f"Error getting user conversations: {e}")
+            print(f"Error getting evaluation data: {e}")
             return []
 
 # Convenience functions
@@ -370,7 +370,7 @@ def get_relevant_memories(user_id: int, query_embedding: List[float], top_k: int
     with DatabaseManager() as db:
         return db.get_relevant_memories(user_id, query_embedding, top_k)
 
-def get_evaluation_data(user_id: int, round: int | None = None):
+def get_evaluation_data(user_id: int, round: str | None = None):
     with DatabaseManager() as db:
         return db.get_evaluation_data(user_id, round)
         
