@@ -44,11 +44,11 @@ class IdeaEvaluation(Base):
     __tablename__ = "idea_evaluation"
     
     id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(Integer, ForeignKey("user.user_id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("user.user_id"), nullable=False, unique=True)
     problem = Column(Text, nullable=False)
     solution = Column(Text, nullable=False)
     ai_feedback = Column(Text)
-    round = Column(String(32), nullable=False)  # Matching your 'idea_evaluation_rounds'
+    round = Column(Integer, nullable=False, unique=True)  # Matching your 'idea_evaluation_rounds'
     created_at = Column(
         TIMESTAMP, 
         server_default=func.current_timestamp(),
@@ -200,7 +200,7 @@ class DatabaseManager:
             print(f"Error getting user profile: {e}")
             return None
     
-    def create_evaluation_record(self, user_id: int, problem: str, solution: str, ai_feedback: str | None, round: str, time_remaining: int) -> Optional[dict]:
+    def create_evaluation_record(self, user_id: int, problem: str, solution: str, ai_feedback: str | None, round: int, time_remaining: int) -> Optional[dict]:
         try:
             new_idea_eval = IdeaEvaluation(user_id = user_id, problem = problem, solution = solution, ai_feedback = ai_feedback, round = round, time_remaining = time_remaining)
             self.db.add(new_idea_eval)
@@ -339,7 +339,7 @@ class DatabaseManager:
             else:
                 # Convert int round to string for database query
                 round_str = str(round)
-                eval_data = self.db.query(IdeaEvaluation).filter(IdeaEvaluation.user_id == user_id, IdeaEvaluation.round == round_str).all()
+                eval_data = self.db.query(IdeaEvaluation).filter(IdeaEvaluation.user_id == user_id, IdeaEvaluation.round == f"round-{round_str}").all() # "weired" round check because all possible enum values are
                 return eval_data
 
         except Exception as e:
@@ -396,7 +396,7 @@ def get_evaluation_data(user_id: int, round: int | None = None):
     with DatabaseManager() as db:
         return db.get_evaluation_data(user_id, round)
     
-def create_evaluation_round_data(user_id: int, problem: str, solution: str, ai_feedback: str | None, round: str, time_remaining: int):
+def create_evaluation_round_data(user_id: int, problem: str, solution: str, ai_feedback: str | None, round: int, time_remaining: int):
     with DatabaseManager() as db:
         return db.create_evaluation_record(user_id, problem, solution, ai_feedback, round, time_remaining)
         
