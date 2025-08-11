@@ -1,6 +1,6 @@
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, Request, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, EmailStr, validator
 from datetime import datetime, timedelta, date
 from typing import Dict, Optional, List
@@ -13,7 +13,6 @@ from agents.database import (
     get_user_by_token, 
     get_user_by_email_and_dob, 
     create_user, 
-    update_user_login_time, 
     get_user_profile,
     save_conversation_message,
     get_user_conversations
@@ -21,7 +20,6 @@ from agents.database import (
 from .memory_system import memory_system
 
 app = FastAPI()
-security = HTTPBearer()
 
 # CORS setup
 origins = [
@@ -41,6 +39,7 @@ REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
 REDIS_DB = int(os.getenv("REDIS_DB", 0))
 REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", None)
+IS_LOCAL = os.getenv("ENV", "dev") == "dev"
 
 # Initialize Redis client for distributed session storage
 try:
@@ -131,9 +130,15 @@ class InterviewHistory(BaseModel):
     """Interview history request model"""
     user_id: int
 
-async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> Dict:
+async def get_current_user(request: Request) -> Dict:
     """Dependency to get current user from token"""
-    token = credentials.credentials
+    token = request.cookies.get("auth_token")
+    if not token:
+        raise HTTPException(
+            status_code=401, 
+            detail="Authentication expired!"
+        )
+
     user = get_user_by_token(token)
     
     if not user:
@@ -141,9 +146,6 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
             status_code=401, 
             detail="Invalid token or user not found"
         )
-    
-    # Update last login time
-    # update_user_login_time(user["user_id"])
     
     return user
 
@@ -249,10 +251,10 @@ async def register_user(user_data: UserRegistration):
         agent_type = 1 if int(str(user_id)[-1]) % 2 == 1 else 2
         
         # Update the user's agent_type in the database
-        from agents.database import update_user_agent_type
-        update_user_agent_type(user_id, agent_type)
-        
-        return {
+        # from agents.database import update_user_agent_type
+        # update_user_agent_type(user_id, agent_type)
+         # Prepare response data
+        resp_data = {
             "user_id": user_id,
             "first_name": user_data.first_name,
             "last_name": user_data.last_name,
@@ -260,6 +262,18 @@ async def register_user(user_data: UserRegistration):
             "token": token,
             "message": "User registered successfully"
         }
+        
+        response = JSONResponse(content=resp_data)
+        response.set_cookie(
+            key="auth_token",
+            value=token,
+            httponly=True,      # JS can't access cookie
+            secure=not IS_LOCAL,        # only over HTTPS
+            samesite="none" if not IS_LOCAL else "strict",     # adjust if cross-site needed
+            max_age=60 * 60 * 24 * 7  # 7 days
+        )
+        return response
+    
     except HTTPException:
         raise
     except Exception as e:
@@ -280,7 +294,7 @@ async def login_user(login_data: UserLogin):
         # Update last login time
         # update_user_login_time(user["user_id"])
         
-        return {
+        response_data = {
             "user_id": user["user_id"],
             "email": user["email"],
             "first_name": user["first_name"],
@@ -288,11 +302,23 @@ async def login_user(login_data: UserLogin):
             "token": user["token"],
             "message": "Login successful"
         }
+
+        response  = JSONResponse(content=response_data)
+        response.set_cookie(
+            key="auth_token",
+            value=response_data["token"],
+            httponly=True,      # JS can't access cookie
+            secure=not IS_LOCAL,        # only over HTTPS
+            samesite="none" if not IS_LOCAL else "strict",     # adjust if cross-site needed
+            max_age=60 * 60 * 24 * 7  # 7 days
+        )
+        return response
+    
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Login failed: {str(e)}")
 
+        raise HTTPException(status_code=500, detail=f"Login failed: {str(e)}")
 @app.post("/agent")
 async def post_agent(input: ChatInput, current_user: Dict = Depends(get_current_user)):
     """Handle chat requests with token-based authentication, rate limiting, and RAG memory"""
