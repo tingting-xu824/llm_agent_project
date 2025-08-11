@@ -163,17 +163,6 @@ class DatabaseManager:
             print(f"Error creating user: {e}")
             return None
     
-    def update_user_login_time(self, user_id: int):
-        """Update user's last login time using ORM"""
-        try:
-            user = self.db.query(User).filter(User.user_id == user_id).first()
-            if user:
-                user.registration_time = datetime.utcnow()
-                self.db.commit()
-        except Exception as e:
-            self.db.rollback()
-            print(f"Error updating user login time: {e}")
-    
     def get_user_profile(self, user_id: int) -> Optional[Dict]:
         """Get complete user profile using ORM"""
         try:
@@ -355,11 +344,6 @@ def create_user(user_data: Dict) -> Optional[Column[int]]:
     """Create new user"""
     with DatabaseManager() as db:
         return db.create_user(user_data)
-
-def update_user_login_time(user_id: int):
-    """Update user's last login time"""
-    with DatabaseManager() as db:
-        db.update_user_login_time(user_id)
 
 def get_user_profile(user_id: int) -> Optional[Dict]:
     """Get complete user profile"""

@@ -358,9 +358,6 @@ async def login_user(login_data: UserLogin):
                 detail="Invalid email or date of birth"
             )
         
-        # Update last login time
-        # update_user_login_time(user["user_id"])
-        
         response_data = {
             "user_id": user["user_id"],
             "email": user["email"],
