@@ -217,6 +217,70 @@ def save_user_last_request_time(user_id: int, request_time: datetime):
     # Fallback to in-memory storage
     in_memory_last_requests[user_id] = request_time
 
+# Async versions of the above functions for use in async endpoints
+async def get_user_conversation_async(user_id: int) -> list[tuple[str, str]]:
+    """Async version of get_user_conversation"""
+    if redis_client:
+        try:
+            conversation_key = get_user_conversation_key(user_id)
+            conversation_data = await redis_client.get(conversation_key)
+            if conversation_data:
+                return json.loads(conversation_data)
+            return []
+        except Exception as e:
+            print(f"Error getting user conversation from Redis: {e}")
+    
+    # Fallback to in-memory storage
+    return in_memory_conversations.get(user_id, [])
+
+async def save_user_conversation_async(user_id: int, conversation: list[tuple[str, str]]):
+    """Async version of save_user_conversation"""
+    if redis_client:
+        try:
+            conversation_key = get_user_conversation_key(user_id)
+            # Set expiration to 24 hours for automatic cleanup
+            await redis_client.setex(conversation_key, 86400, json.dumps(conversation))
+            return
+        except Exception as e:
+            print(f"Error saving user conversation to Redis: {e}")
+    
+    # Fallback to in-memory storage
+    in_memory_conversations[user_id] = conversation
+
+async def get_user_last_request_time_async(user_id: int) -> datetime | None:
+    """Async version of get_user_last_request_time"""
+    if redis_client:
+        try:
+            request_key = get_user_last_request_key(user_id)
+            last_time_str = await redis_client.get(request_key)
+            if last_time_str:
+                return datetime.fromisoformat(last_time_str)
+            return None
+        except Exception as e:
+            print(f"Error getting user last request time from Redis: {e}")
+    
+    # Fallback to in-memory storage
+    return in_memory_last_requests.get(user_id)
+
+async def save_user_last_request_time_async(user_id: int, request_time: datetime):
+    """Async version of save_user_last_request_time"""
+    if redis_client:
+        try:
+            request_key = get_user_last_request_key(user_id)
+            # Set expiration to 1 hour for rate limiting
+            await redis_client.setex(request_key, 3600, request_time.isoformat())
+            return
+        except Exception as e:
+            print(f"Error saving user last request time to Redis: {e}")
+    
+    # Fallback to in-memory storage
+    in_memory_last_requests[user_id] = request_time
+
+async def save_conversation_message_async(user_id: int, message: str, role: str, mode: str, agent_type: int) -> Optional[Column[int]]:
+    """Async version of save_conversation_message - optimized to minimize thread pool usage"""
+    from agents.database import save_conversation_message_async as db_save_conversation
+    return await db_save_conversation(user_id, message, role, mode, agent_type)
+
 @app.post("/users/register")
 async def register_user(user_data: UserRegistration):
     """Register a new user with comprehensive profile information"""
@@ -341,11 +405,11 @@ async def post_agent(input: ChatInput, current_user: Dict = Depends(get_current_
     
     # Rate limiting check
     now = datetime.utcnow()
-    last_time = get_user_last_request_time(user_id)
+    last_time = await get_user_last_request_time_async(user_id)
     if last_time and (now - last_time).total_seconds() < COOLDOWN_SECONDS:
         raise HTTPException(status_code=429, detail="Too many requests. Please wait.")
 
-    save_user_last_request_time(user_id, now)
+    await save_user_last_request_time_async(user_id, now)
 
     # Select agent and model based on mode
     if input.mode == "eval":
@@ -361,14 +425,14 @@ async def post_agent(input: ChatInput, current_user: Dict = Depends(get_current_
         raise HTTPException(status_code=400, detail="Invalid mode")
 
     # Get user conversation history from Redis (for immediate context)
-    history = get_user_conversation(user_id)
+    history = await get_user_conversation_async(user_id)
     user_msg = input.message
     
     # Store user message in database
-    save_conversation_message(user_id, user_msg, "user", input.mode, agent_type)
+    await save_conversation_message_async(user_id, user_msg, "user", input.mode, agent_type)
     
     # Get relevant memories for RAG
-    memory_context = memory_system.create_memory_context(user_id, user_msg, top_k=3)
+    memory_context = await memory_system.create_memory_context(user_id, user_msg, top_k=3)
     
     # Prepare enhanced prompt with memory context
     enhanced_prompt = user_msg
@@ -387,12 +451,12 @@ Please respond to the current message while considering the relevant context fro
     agent_reply = await run_agent(assigned_agent, enhanced_prompt, history, model)
     
     # Store agent reply in database
-    save_conversation_message(user_id, agent_reply, "assistant", input.mode, agent_type)
+    await save_conversation_message_async(user_id, agent_reply, "assistant", input.mode, agent_type)
     
     # Store important parts in memory system for future RAG
     # Store user message if it contains important information
     if len(user_msg) > 20:  # Only store substantial messages
-        memory_system.store_memory(
+        await memory_system.store_memory(
             user_id, 
             user_msg, 
             metadata={
@@ -405,7 +469,7 @@ Please respond to the current message while considering the relevant context fro
     
     # Store agent reply if it contains substantial information
     if len(agent_reply) > 30:  # Only store substantial responses
-        memory_system.store_memory(
+        await memory_system.store_memory(
             user_id, 
             agent_reply, 
             metadata={
@@ -418,7 +482,7 @@ Please respond to the current message while considering the relevant context fro
     
     # Update immediate history for Redis
     history.append(("Assistant", agent_reply))
-    save_user_conversation(user_id, history)
+    await save_user_conversation_async(user_id, history)
 
     return [
         {
@@ -434,7 +498,7 @@ async def get_history(current_user: Dict = Depends(get_current_user)):
     """Get user's conversation history from Redis"""
     user_id = current_user["user_id"]
     
-    history = get_user_conversation(user_id)
+    history = await get_user_conversation_async(user_id)
     if not history:
         raise HTTPException(status_code=404, detail="No history found for this user.")
 
@@ -452,7 +516,10 @@ async def get_conversation_history(current_user: Dict = Depends(get_current_user
     """Get user's conversation history from database"""
     user_id = current_user["user_id"]
     
-    conversations = get_user_conversations(user_id, limit)
+    # Use optimized async function to minimize thread pool usage
+    from agents.database import get_user_conversations_async
+    conversations = await get_user_conversations_async(user_id, limit)
+    
     if not conversations:
         raise HTTPException(status_code=404, detail="No conversation history found for this user.")
     
@@ -466,7 +533,7 @@ async def get_user_memories(current_user: Dict = Depends(get_current_user), quer
     if not query:
         raise HTTPException(status_code=400, detail="Query parameter is required")
     
-    memories = memory_system.retrieve_relevant_memories(user_id, query, top_k)
+    memories = await memory_system.retrieve_relevant_memories(user_id, query, top_k)
     return {
         "query": query,
         "memories": memories,
@@ -477,7 +544,9 @@ async def get_user_memories(current_user: Dict = Depends(get_current_user), quer
 async def get_user_profile_endpoint(current_user: Dict = Depends(get_current_user)):
     """Get current user's complete profile information"""
     try:
-        profile = get_user_profile(current_user["user_id"])
+        # Use optimized async function to minimize thread pool usage
+        from agents.database import get_user_profile_async
+        profile = await get_user_profile_async(current_user["user_id"])
         
         if profile:
             return profile

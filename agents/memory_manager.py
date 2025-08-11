@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import hashlib
+import time
 from datetime import datetime, timedelta
 from contextlib import contextmanager
 from typing import List, Dict, Tuple, Optional, Any, Callable
@@ -16,6 +17,182 @@ load_dotenv()
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+class RobustConnectionPool:
+    """Enhanced connection pool with recovery mechanisms"""
+    
+    def __init__(self, database_url: str, minconn: int = 5, maxconn: int = 20, 
+                 connect_timeout: int = 10, retry_attempts: int = 3, 
+                 retry_delay: float = 1.0, health_check_interval: int = 300):
+        """
+        Initialize robust connection pool
+        
+        Args:
+            database_url: PostgreSQL connection string
+            minconn: Minimum connections in pool
+            maxconn: Maximum connections in pool
+            connect_timeout: Connection timeout in seconds
+            retry_attempts: Number of retry attempts for failed operations
+            retry_delay: Delay between retries in seconds
+            health_check_interval: Health check interval in seconds
+        """
+        self.database_url = database_url
+        self.minconn = minconn
+        self.maxconn = maxconn
+        self.connect_timeout = connect_timeout
+        self.retry_attempts = retry_attempts
+        self.retry_delay = retry_delay
+        self.health_check_interval = health_check_interval
+        self.last_health_check = 0
+        self.pool = None
+        self.is_healthy = True
+        self.connection_errors = 0
+        self.max_connection_errors = 10
+        
+        # Initialize pool
+        self._initialize_pool()
+        
+        # Start health check task
+        self._start_health_check()
+    
+    def _initialize_pool(self):
+        """Initialize the connection pool"""
+        try:
+            self.pool = psycopg2.pool.ThreadedConnectionPool(
+                minconn=self.minconn,
+                maxconn=self.maxconn,
+                dsn=self.database_url,
+                connect_timeout=self.connect_timeout,
+                application_name="hackathon_memory_system"
+            )
+            self.is_healthy = True
+            self.connection_errors = 0
+            logger.info(f"Database connection pool initialized with {self.minconn}-{self.maxconn} connections")
+        except Exception as e:
+            logger.error(f"Failed to initialize database connection pool: {e}")
+            self.is_healthy = False
+            raise
+    
+    def _start_health_check(self):
+        """Start periodic health check"""
+        async def health_check_loop():
+            while True:
+                try:
+                    await asyncio.sleep(self.health_check_interval)
+                    await self._perform_health_check()
+                except Exception as e:
+                    logger.error(f"Health check failed: {e}")
+        
+        # Start health check in background
+        asyncio.create_task(health_check_loop())
+    
+    async def _perform_health_check(self):
+        """Perform health check on the connection pool"""
+        if not self.pool:
+            return
+        
+        try:
+            conn = self.pool.getconn()
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1")
+            cursor.fetchone()
+            cursor.close()
+            self.pool.putconn(conn)
+            
+            self.is_healthy = True
+            self.connection_errors = 0
+            self.last_health_check = time.time()
+            logger.debug("Database connection pool health check passed")
+            
+        except Exception as e:
+            logger.warning(f"Database connection pool health check failed: {e}")
+            self.connection_errors += 1
+            self.is_healthy = False
+            
+            # Attempt pool recovery if too many errors
+            if self.connection_errors >= self.max_connection_errors:
+                await self._recover_pool()
+    
+    async def _recover_pool(self):
+        """Attempt to recover the connection pool"""
+        logger.warning("Attempting to recover database connection pool...")
+        
+        try:
+            # Close existing pool
+            if self.pool:
+                self.pool.closeall()
+            
+            # Wait before reinitializing
+            await asyncio.sleep(self.retry_delay * 2)
+            
+            # Reinitialize pool
+            self._initialize_pool()
+            logger.info("Database connection pool recovered successfully")
+            
+        except Exception as e:
+            logger.error(f"Failed to recover database connection pool: {e}")
+            self.is_healthy = False
+    
+    def get_connection(self):
+        """Get a connection from the pool with retry logic"""
+        for attempt in range(self.retry_attempts):
+            try:
+                if not self.is_healthy:
+                    logger.warning("Connection pool is unhealthy, attempting recovery...")
+                    # Note: Recovery is handled asynchronously in health check
+                    # For sync context, we'll just try to get a connection
+                
+                conn = self.pool.getconn()
+                return conn
+                
+            except psycopg2.pool.PoolError as e:
+                logger.warning(f"Connection pool exhausted (attempt {attempt + 1}/{self.retry_attempts}): {e}")
+                
+                if attempt < self.retry_attempts - 1:
+                    time.sleep(self.retry_delay * (attempt + 1))  # Exponential backoff
+                else:
+                    logger.error("All connection pool retry attempts failed")
+                    raise Exception("Database temporarily unavailable - connection pool exhausted")
+            
+            except Exception as e:
+                logger.error(f"Unexpected error getting connection: {e}")
+                raise
+    
+    def return_connection(self, conn):
+        """Return a connection to the pool safely"""
+        try:
+            if conn and self.pool:
+                self.pool.putconn(conn)
+        except Exception as e:
+            logger.error(f"Error returning connection to pool: {e}")
+            # Try to close the connection if we can't return it to the pool
+            try:
+                conn.close()
+            except:
+                pass
+    
+    def get_pool_status(self) -> Dict[str, Any]:
+        """Get current pool status"""
+        if not self.pool:
+            return {"status": "not_initialized"}
+        
+        try:
+            return {
+                "status": "healthy" if self.is_healthy else "unhealthy",
+                "min_connections": self.minconn,
+                "max_connections": self.maxconn,
+                "connection_errors": self.connection_errors,
+                "last_health_check": self.last_health_check,
+                "pool_size": self.pool.get_size() if hasattr(self.pool, 'get_size') else "unknown"
+            }
+        except Exception as e:
+            return {"status": "error", "error": str(e)}
+    
+    def close(self):
+        """Close the connection pool"""
+        if self.pool:
+            self.pool.closeall()
+            logger.info("Database connection pool closed")
 
 class MemoryManager:
     """Manages vector memory storage and retrieval for the hackathon system"""
@@ -36,23 +213,20 @@ class MemoryManager:
         self.embedding_cache = {}  # Simple in-memory cache for embeddings
         self.cache_size_limit = 1000
         
-        # Initialize database connection pool
-        try:
-            self.connection_pool = psycopg2.pool.ThreadedConnectionPool(
-                minconn=5,
-                maxconn=pool_size,
-                dsn=database_url,
-                connect_timeout=10,
-                application_name="hackathon_memory_system"
-            )
-            logger.info(f"Database connection pool initialized with max {pool_size} connections")
-        except Exception as e:
-            logger.error(f"Failed to initialize database connection pool: {e}")
-            raise
+        # Initialize robust database connection pool
+        self.connection_pool = RobustConnectionPool(
+            database_url=database_url,
+            minconn=5,
+            maxconn=pool_size,
+            connect_timeout=10,
+            retry_attempts=3,
+            retry_delay=1.0,
+            health_check_interval=300
+        )
         
         # Memory trigger thresholds
         self.chat_message_threshold = 10
-        self.inactivity_threshold = 3600  # 1 hour in seconds
+        self.inactivity_threshold = 1800  # 30 minutes in seconds
         self.important_keywords = [
             'important', 'decision', 'problem', 'solution', 'change', 'modify',
             'key', 'critical', 'issue', 'update', 'final', 'conclusion'
@@ -60,23 +234,23 @@ class MemoryManager:
     
     @contextmanager
     def get_db_connection(self):
-        """Safe database connection context manager"""
+        """Safe database connection context manager with recovery"""
         conn = None
         try:
-            conn = self.connection_pool.getconn()
+            conn = self.connection_pool.get_connection()
             yield conn
             conn.commit()
-        except psycopg2.pool.PoolError as e:
-            logger.error(f"Database connection pool exhausted: {e}")
-            raise Exception("Database temporarily unavailable")
         except Exception as e:
             if conn:
-                conn.rollback()
+                try:
+                    conn.rollback()
+                except:
+                    pass
             logger.error(f"Database error: {e}")
             raise
         finally:
             if conn:
-                self.connection_pool.putconn(conn)
+                self.connection_pool.return_connection(conn)
     
     async def get_embedding_with_cache(self, text: str) -> List[float]:
         """Get embedding vector for text with caching"""
@@ -159,8 +333,8 @@ class MemoryManager:
             logger.error(f"Failed to extract memory: {e}")
             return f"Memory extraction failed for conversation at {datetime.now()}"
     
-    async def store_memory(self, user_id: int, memory_type: str, source_conversations: str, 
-                          memory_content: str, embedding: List[float], metadata: Dict | None = None) -> int:
+    async def store_memory(self, user_id: int, memory_type: str, source_conversations: str,
+                          memory_content: str, embedding: List[float], metadata: Optional[Dict] = None) -> int:
         """Store memory vector in database"""
         try:
             with self.get_db_connection() as conn:
@@ -256,8 +430,8 @@ class MemoryManager:
         return len(triggers) > 0, triggers
     
     async def create_memory_from_conversations(self, user_id: int, memory_type: str, 
-                                              conversation_ids: List[int] | None = None, 
-                                              agent_type: int | None = None) -> Optional[int]:
+                                              conversation_ids: Optional[List[int]] = None,
+                                              agent_type: Optional[int] = None) -> Optional[int]:
         """Create memory from recent conversations"""
         try:
             # Get conversations
@@ -303,7 +477,7 @@ class MemoryManager:
             return None
     
     async def create_memory_async(self, user_id: int, mode: str, triggers: List[str], 
-                                 agent_type: int | None = None) -> None:
+                                 agent_type: Optional[int] = None) -> None:
         """Asynchronously create memory without blocking API response"""
         try:
             memory_type = "round_summary" if mode == "eval" else "conversation_chunk"
@@ -358,9 +532,11 @@ class MemoryManager:
         self.embedding_cache.clear()
         logger.info("Embedding cache cleared")
     
+    def get_pool_status(self) -> Dict[str, Any]:
+        """Get connection pool status for monitoring"""
+        return self.connection_pool.get_pool_status()
+    
     def close(self):
         """Close all database connections and cleanup"""
-        if hasattr(self, 'connection_pool'):
-            self.connection_pool.closeall()
-            logger.info("Database connection pool closed")
+        self.connection_pool.close()
         self.clear_embedding_cache()
