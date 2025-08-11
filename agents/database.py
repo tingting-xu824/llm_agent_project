@@ -316,13 +316,15 @@ class DatabaseManager:
             print(f"Error getting relevant memories: {e}")
             return []
 
-    def get_evaluation_data(self, user_id: int, round: str | None = None):
+    def get_evaluation_data(self, user_id: int, round: int | None = None):
         try:
             if round is None:
                 eval_data = self.db.query(IdeaEvaluation).filter(IdeaEvaluation.user_id == user_id).all()
                 return eval_data
             else:
-                eval_data = self.db.query(IdeaEvaluation).filter(IdeaEvaluation.user_id == user_id, IdeaEvaluation.round == round).all()
+                # Convert int round to string for database query
+                round_str = str(round)
+                eval_data = self.db.query(IdeaEvaluation).filter(IdeaEvaluation.user_id == user_id, IdeaEvaluation.round == round_str).all()
                 return eval_data
 
         except Exception as e:
@@ -370,7 +372,7 @@ def get_relevant_memories(user_id: int, query_embedding: List[float], top_k: int
     with DatabaseManager() as db:
         return db.get_relevant_memories(user_id, query_embedding, top_k)
 
-def get_evaluation_data(user_id: int, round: str | None = None):
+def get_evaluation_data(user_id: int, round: int | None = None):
     with DatabaseManager() as db:
         return db.get_evaluation_data(user_id, round)
         
