@@ -3,7 +3,7 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.sql import func
 import os
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Any
 from datetime import datetime, date
 
 # Database configuration

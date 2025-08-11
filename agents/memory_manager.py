@@ -3,7 +3,7 @@ import json
 import logging
 import hashlib
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from contextlib import contextmanager
 from typing import List, Dict, Tuple, Optional, Any, Callable
 import psycopg2

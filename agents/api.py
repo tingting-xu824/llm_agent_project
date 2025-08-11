@@ -20,6 +20,7 @@ from agents.database import (
 )
 from .memory_system import memory_system
 from fastapi import Query
+from sqlalchemy import Column
 
 app = FastAPI()
 
