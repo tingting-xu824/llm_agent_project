@@ -150,18 +150,28 @@ class DatabaseManager:
             print(f"Error getting user by email and DOB: {e}")
             return None
     
-    def create_user(self, user_data: Dict) -> Optional[Column[int]]:
+    def create_user(self, user_data: Dict) -> tuple[Optional[Column[int]], Optional[str]]:
         """Create new user using ORM"""
         try:
             new_user = User(**user_data)
             self.db.add(new_user)
             self.db.commit()
             self.db.refresh(new_user)
-            return new_user.user_id
+            return new_user.user_id, None
         except Exception as e:
             self.db.rollback()
             print(f"Error creating user: {e}")
-            return None
+            
+            # Check for specific database constraint violations
+            error_str = str(e).lower()
+            if "unique constraint" in error_str and "email" in error_str:
+                return None, "email_already_exists"
+            elif "unique constraint" in error_str and "token" in error_str:
+                return None, "token_already_exists"
+            elif "not null constraint" in error_str:
+                return None, "missing_required_fields"
+            else:
+                return None, "database_error"
     
     def update_user_agent_type(self, user_id: int, agent_type: int) -> bool:
         """Update user's agent type using ORM"""
@@ -357,7 +367,7 @@ def get_user_by_email_and_dob(email: str, date_of_birth: date) -> Optional[Dict]
     with DatabaseManager() as db:
         return db.get_user_by_email_and_dob(email, date_of_birth)
 
-def create_user(user_data: Dict):
+def create_user(user_data: Dict) -> tuple[Optional[Column[int]], Optional[str]]:
     """Create new user"""
     with DatabaseManager() as db:
         return db.create_user(user_data)
