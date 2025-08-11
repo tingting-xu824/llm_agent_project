@@ -340,7 +340,7 @@ def get_user_by_email_and_dob(email: str, date_of_birth: date) -> Optional[Dict]
     with DatabaseManager() as db:
         return db.get_user_by_email_and_dob(email, date_of_birth)
 
-def create_user(user_data: Dict) -> Optional[Column[int]]:
+def create_user(user_data: Dict):
     """Create new user"""
     with DatabaseManager() as db:
         return db.create_user(user_data)
@@ -373,6 +373,10 @@ def get_relevant_memories(user_id: int, query_embedding: List[float], top_k: int
 def get_evaluation_data(user_id: int, round: int | None = None):
     with DatabaseManager() as db:
         return db.get_evaluation_data(user_id, round)
+    
+def create_evaluation_round_data(user_id: int, problem: str, solution: str, ai_feedback: str | None, round: str, time_remaining: int):
+    with DatabaseManager() as db:
+        return db.create_evaluation_record(user_id, problem, solution, ai_feedback, round, time_remaining)
         
 # Optimized async functions that minimize run_in_executor overhead
 # These functions use a single thread pool call for multiple operations

@@ -16,8 +16,10 @@ from agents.database import (
     get_user_profile,
     save_conversation_message,
     get_user_conversations,
+    create_evaluation_round_data,
     get_evaluation_data
 )
+from agents.constants import EVALUATION_ROUND_1_TIME
 from .memory_system import memory_system
 from fastapi import Query
 from sqlalchemy import Column
@@ -310,6 +312,7 @@ async def register_user(user_data: UserRegistration):
         
         # Create user using database module
         user_id = create_user(db_user_data)
+        create_evaluation_round_data(user_id=user_id, problem="", solution="", ai_feedback=None, round="round-1",time_remaining=EVALUATION_ROUND_1_TIME)
         
         if not user_id:
             raise HTTPException(status_code=400, detail="Registration failed - duplicate data")
