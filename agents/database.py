@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, Column, Integer, String, Date, DateTime, Text, Float
+from sqlalchemy import create_engine, Column, Integer, String, Date, DateTime, Text, TIMESTAMP, BigInteger, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.sql import func
@@ -40,6 +40,25 @@ class User(Base):
     token = Column(String, unique=True, index=True)
     registration_time = Column(DateTime, default=func.now())
 
+class IdeaEvaluation(Base):
+    __tablename__ = "idea_evaluation"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer,ForeignKey("users.id"), nullable=False)
+    problem = Column(Text, nullable=False)
+    solution = Column(Text, nullable=False)
+    ai_feedback = Column(Text)
+    round = Column(String(32), nullable=False)  # Matching your 'idea_evaluation_rounds'
+    created_at = Column(
+        TIMESTAMP, 
+        server_default=func.current_timestamp(),
+        nullable=False
+    )
+    time_remaining = Column(BigInteger)
+
+    def __repr__(self):
+        return f"<IdeaEvaluation(id={self.id}, user_id={self.user_id}, round={self.round})>"
+    
 class Conversation(Base):
     """Conversation model for storing chat messages"""
     __tablename__ = "conversation"
@@ -177,6 +196,18 @@ class DatabaseManager:
             print(f"Error getting user profile: {e}")
             return None
     
+    def create_evaluation_record(self, user_id: int, problem: str, solution: str, ai_feedback: str | None, round: str, time_remaining: int) -> Optional[dict]:
+        try:
+            new_idea_eval = IdeaEvaluation(user_id = user_id, problem = problem, solution = solution, ai_feedback = ai_feedback, round = round, time_remaining = time_remaining)
+            self.db.add(new_idea_eval)
+            self.db.commit()
+            self.db.refresh(new_idea_eval)
+            return new_idea_eval
+        except Exception as e:
+            self.db.rollback()
+            print(f"Error creating evaluation record: {e}")
+            return None
+
     def save_conversation_message(self, user_id: int, message: str, role: str, mode: str, agent_type: int) -> Optional[Column[int]]:
         """Save a conversation message to database"""
         try:
@@ -297,6 +328,19 @@ class DatabaseManager:
             print(f"Error getting relevant memories: {e}")
             return []
 
+    def get_evaluation_data(self, user_id: int, round: int | None = None):
+        try:
+            if round:
+                eval_data = self.db.query(IdeaEvaluation).where(IdeaEvaluation.user_id == user_id)
+                return eval_data
+            else:
+                eval_data = self.db.query(IdeaEvaluation).where(IdeaEvaluation.user_id == user_id, IdeaEvaluation.round == round)
+                return eval_data
+
+        except Exception as e:
+            print(f"Error getting user conversations: {e}")
+            return []
+
 # Convenience functions
 def get_user_by_token(token: str) -> Optional[Dict]:
     """Get user by token"""
@@ -342,3 +386,8 @@ def get_relevant_memories(user_id: int, query_embedding: List[float], top_k: int
     """Get relevant memories"""
     with DatabaseManager() as db:
         return db.get_relevant_memories(user_id, query_embedding, top_k)
+
+def get_evaluation_data(user_id: int, round: int | None = None):
+    with DatabaseManager() as db:
+        return db.get_evaluation_data(user_id, round)
+        

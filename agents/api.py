@@ -15,9 +15,11 @@ from agents.database import (
     create_user, 
     get_user_profile,
     save_conversation_message,
-    get_user_conversations
+    get_user_conversations,
+    get_evaluation_data
 )
 from .memory_system import memory_system
+from fastapi import Query
 
 app = FastAPI()
 
@@ -319,6 +321,19 @@ async def login_user(login_data: UserLogin):
     except Exception as e:
 
         raise HTTPException(status_code=500, detail=f"Login failed: {str(e)}")
+
+@app.get("/evaluation")
+async def get_evaluation_by_round(
+    current_user: Dict = Depends(get_current_user),
+    round: Optional[int] = Query(None, alias="round", ge=1, le=3, description="Agent round (1, 2, or 3)")
+):
+    """
+    Get evaluation rounds for the current user, optionally filtered by round.
+    Use ?round=1, ?round=2, ?round=3 or omit for all rounds.
+    """
+    user_id = current_user["user_id"]
+    return get_evaluation_data(user_id, round)
+
 @app.post("/agent")
 async def post_agent(input: ChatInput, current_user: Dict = Depends(get_current_user)):
     """Handle chat requests with token-based authentication, rate limiting, and RAG memory"""
