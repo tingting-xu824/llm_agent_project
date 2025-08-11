@@ -1,4 +1,5 @@
-from fastapi import FastAPI, Request, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, EmailStr, validator
 from datetime import datetime, timedelta, date
@@ -21,6 +22,19 @@ from .memory_system import memory_system
 
 app = FastAPI()
 security = HTTPBearer()
+
+# CORS setup
+origins = [
+    "http://localhost:3231",
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["OPTIONS", "GET", "POST"],
+    allow_headers=["*"],
+)
 
 # Redis configuration for distributed caching
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
