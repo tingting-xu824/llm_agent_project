@@ -167,7 +167,7 @@ class MemoryManager:
                 cursor = conn.cursor()
                 cursor.execute("""
                     INSERT INTO memory_vectors 
-                    (user_id, memory_type, source_conversations, memory_content, embedding, metadata)
+                    (user_id, memory_type, source_conversations, memory_content, embedding, _metadata)
                     VALUES (%s, %s, %s, %s, %s, %s)
                     RETURNING memory_id
                 """, (
@@ -194,7 +194,7 @@ class MemoryManager:
             with self.get_db_connection() as conn:
                 cursor = conn.cursor(cursor_factory=RealDictCursor)
                 cursor.execute("""
-                    SELECT memory_id, memory_content, memory_type, metadata, created_at,
+                    SELECT memory_id, memory_content, memory_type, _metadata, created_at,
                            1 - (embedding <=> %s::VECTOR(1536)) as similarity
                     FROM memory_vectors 
                     WHERE user_id = %s
@@ -329,7 +329,7 @@ class MemoryManager:
             with self.get_db_connection() as conn:
                 cursor = conn.cursor(cursor_factory=RealDictCursor)
                 cursor.execute("""
-                    SELECT memory_id, memory_content, memory_type, metadata, created_at
+                    SELECT memory_id, memory_content, memory_type, _metadata, created_at
                     FROM memory_vectors 
                     WHERE user_id = %s
                     ORDER BY created_at DESC

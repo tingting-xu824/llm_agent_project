@@ -27,6 +27,8 @@ class User(Base):
     __tablename__ = "user"
     
     user_id = Column(Integer, primary_key=True, index=True)
+    first_name = Column(String)
+    last_name = Column(String)
     email = Column(String, unique=True, index=True, nullable=False)
     dob = Column(Date, nullable=False)
     agent_type = Column(Integer, nullable=False)
@@ -65,7 +67,7 @@ class MemoryVector(Base):
     memory_content = Column(Text, nullable=False)  # The text content
     embedding = Column(Text, nullable=False)  # VECTOR(1536) type for pgvector extension
     created_at = Column(DateTime, default=func.now())
-    metadata = Column(Text)  # JSONB metadata
+    _metadata = Column(Text)  # JSONB metadata
 
 class DatabaseManager:
     """Database manager for user operations"""
@@ -112,6 +114,8 @@ class DatabaseManager:
             if user:
                 return {
                     "user_id": user.user_id,
+                    "first_name": user.first_name,
+                    "last_name": user.last_name,
                     "email": user.email,
                     "dob": user.dob,
                     "gender": user.gender,

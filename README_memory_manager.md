@@ -154,7 +154,7 @@ CREATE TABLE memory_vectors (
     source_conversations TEXT NOT NULL, -- Conversation ID array JSON
     memory_content TEXT NOT NULL,       -- Extracted memory content
     embedding VECTOR(1536) NOT NULL,    -- Vector embedding
-    metadata JSONB,                     -- Metadata
+    _metadata JSONB,                     -- Metadata
     created_at TIMESTAMP DEFAULT NOW()
 );
 ```

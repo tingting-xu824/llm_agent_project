@@ -129,7 +129,7 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
         )
     
     # Update last login time
-    update_user_login_time(user["user_id"])
+    # update_user_login_time(user["user_id"])
     
     return user
 
@@ -214,6 +214,8 @@ async def register_user(user_data: UserRegistration):
         db_user_data = {
             "email": user_data.email,
             "dob": user_data.date_of_birth,
+            "first_name": user_data.first_name,
+            "last_name": user_data.last_name,
             "agent_type": 1,  # Temporary value, will be updated
             "gender": user_data.gender,
             "education_field": user_data.field_of_education,
