@@ -1,5 +1,4 @@
 from agents import Agent, Runner, WebSearchTool
-from .memory_system import memory_system
 import os
 from dotenv import load_dotenv
 
@@ -52,8 +51,11 @@ async def run_agent(agent, user_id: int, user_message: str, history: list[tuple[
     Returns:
         str: Agent's response message
     """
+    # Lazy import to avoid circular dependency
+    from .memory_system import memory_system
+    
     # Get relevant memories for context
-    memory_context = memory_system.create_memory_context(user_id, user_message, top_k=3)
+    memory_context = await memory_system.create_memory_context(user_id, user_message, top_k=3)
     
     # Build conversation prompt from history
     prompt = ""

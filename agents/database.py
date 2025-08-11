@@ -341,3 +341,65 @@ def get_relevant_memories(user_id: int, query_embedding: List[float], top_k: int
     """Get relevant memories"""
     with DatabaseManager() as db:
         return db.get_relevant_memories(user_id, query_embedding, top_k)
+
+# Optimized async functions that minimize run_in_executor overhead
+# These functions use a single thread pool call for multiple operations
+
+async def execute_db_operations_batch(operations: List[tuple]) -> List[Any]:
+    """
+    Execute multiple database operations in a single thread pool call
+    to minimize run_in_executor overhead
+    
+    Args:
+        operations: List of (function, *args) tuples
+        
+    Returns:
+        List of results from each operation
+    """
+    import asyncio
+    loop = asyncio.get_event_loop()
+    
+    def execute_operations_sync():
+        results = []
+        with DatabaseManager() as db:
+            for func, args in operations:
+                try:
+                    if func == 'save_conversation_message':
+                        result = db.save_conversation_message(*args)
+                    elif func == 'get_user_conversations':
+                        result = db.get_user_conversations(*args)
+                    elif func == 'get_user_profile':
+                        result = db.get_user_profile(*args)
+                    elif func == 'save_memory_vector':
+                        result = db.save_memory_vector(*args)
+                    else:
+                        result = None
+                    results.append(result)
+                except Exception as e:
+                    print(f"Error executing operation {func}: {e}")
+                    results.append(None)
+        return results
+    
+    return await loop.run_in_executor(None, execute_operations_sync)
+
+# Individual async functions that can be batched
+async def save_conversation_message_async(user_id: int, message: str, role: str, mode: str, agent_type: int) -> Optional[Column[int]]:
+    """Save conversation message - optimized for batching"""
+    results = await execute_db_operations_batch([
+        ('save_conversation_message', (user_id, message, role, mode, agent_type))
+    ])
+    return results[0] if results else None
+
+async def get_user_conversations_async(user_id: int, limit: int = 50) -> List[Dict]:
+    """Get user conversations - optimized for batching"""
+    results = await execute_db_operations_batch([
+        ('get_user_conversations', (user_id, limit))
+    ])
+    return results[0] if results else []
+
+async def get_user_profile_async(user_id: int) -> Optional[Dict]:
+    """Get user profile - optimized for batching"""
+    results = await execute_db_operations_batch([
+        ('get_user_profile', (user_id,))
+    ])
+    return results[0] if results else None
