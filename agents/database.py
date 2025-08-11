@@ -241,9 +241,8 @@ class DatabaseManager:
                 user_id=user_id,
                 memory_type="conversation_memory",
                 memory_content=content,
-                content=content,  # Also set the new content field
                 embedding=json.dumps(embedding),
-                vector_metadata=json.dumps(metadata) if metadata else None
+                _metadata=json.dumps(metadata) if metadata else None
             )
             self.db.add(memory_vector)
             self.db.commit()
@@ -286,8 +285,8 @@ class DatabaseManager:
             return [
                 {
                     "memory_id": mv.memory_id,
-                    "content": mv.content or mv.memory_content,  # Use new field if available, fallback to old
-                    "metadata": json.loads(mv.vector_metadata) if mv.vector_metadata else {},
+                    "content": mv.memory_content,  # Use memory_content field
+                    "metadata": json.loads(mv._metadata) if mv._metadata else {},
                     "similarity": float(similarity),
                     "created_at": mv.created_at
                 }
