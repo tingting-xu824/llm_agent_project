@@ -309,17 +309,40 @@ async def register_user(user_data: UserRegistration):
         }
         
         # Create user using database module
-        user_id = create_user(db_user_data)
+        result = create_user(db_user_data)
+        user_id, error_type = result
         
         if not user_id:
-            raise HTTPException(status_code=400, detail="Registration failed - duplicate data")
+            # Provide specific error messages based on error type
+            if error_type == "email_already_exists":
+                raise HTTPException(
+                    status_code=409, 
+                    detail="An account with this email address already exists. Please use a different email or try logging in."
+                )
+            elif error_type == "token_already_exists":
+                raise HTTPException(
+                    status_code=500, 
+                    detail="Registration failed due to a system error. Please try again."
+                )
+            elif error_type == "missing_required_fields":
+                raise HTTPException(
+                    status_code=400, 
+                    detail="Registration failed: Please fill in all required fields."
+                )
+            else:
+                raise HTTPException(
+                    status_code=500, 
+                    detail="Registration failed due to a system error. Please try again later."
+                )
         
         # Assign agent_type based on user ID for load balancing
         agent_type = 1 if int(str(user_id)[-1]) % 2 == 1 else 2
         
         # Update the user's agent_type in the database
         from agents.database import update_user_agent_type
-        update_user_agent_type(user_id, agent_type)
+        update_success = update_user_agent_type(user_id, agent_type)
+        if not update_success:
+            print(f"Warning: Failed to update agent_type for user {user_id}")
          # Prepare response data
         resp_data = {
             "user_id": user_id,
@@ -344,7 +367,8 @@ async def register_user(user_data: UserRegistration):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Registration failed: {str(e)}")
+        print(f"Registration error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Registration failed due to an unexpected error. Please try again later.")
 
 @app.post("/users/login")
 async def login_user(login_data: UserLogin):
@@ -381,8 +405,8 @@ async def login_user(login_data: UserLogin):
     except HTTPException:
         raise
     except Exception as e:
-
-        raise HTTPException(status_code=500, detail=f"Login failed: {str(e)}")
+        print(f"Login error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Login failed due to a system error. Please try again later.")
 
 @app.get("/evaluation")
 async def get_evaluation_by_round(
