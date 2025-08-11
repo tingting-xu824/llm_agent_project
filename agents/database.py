@@ -44,7 +44,7 @@ class IdeaEvaluation(Base):
     __tablename__ = "idea_evaluation"
     
     id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(Integer,ForeignKey("users.id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("user.user_id"), nullable=False)
     problem = Column(Text, nullable=False)
     solution = Column(Text, nullable=False)
     ai_feedback = Column(Text)
@@ -163,6 +163,20 @@ class DatabaseManager:
             print(f"Error creating user: {e}")
             return None
     
+    def update_user_agent_type(self, user_id: int, agent_type: int) -> bool:
+        """Update user's agent type using ORM"""
+        try:
+            user = self.db.query(User).filter(User.user_id == user_id).first()
+            if user:
+                user.agent_type = agent_type
+                self.db.commit()
+                return True
+            return False
+        except Exception as e:
+            self.db.rollback()
+            print(f"Error updating user agent type: {e}")
+            return False
+    
     def get_user_profile(self, user_id: int) -> Optional[Dict]:
         """Get complete user profile using ORM"""
         try:
@@ -172,6 +186,7 @@ class DatabaseManager:
                     "user_id": user.user_id,
                     "email": user.email,
                     "dob": user.dob,
+                    "agent_type": user.agent_type,
                     "gender": user.gender,
                     "education_field": user.education_field,
                     "education_level": user.education_level,
@@ -318,15 +333,17 @@ class DatabaseManager:
 
     def get_evaluation_data(self, user_id: int, round: int | None = None):
         try:
-            if round:
-                eval_data = self.db.query(IdeaEvaluation).where(IdeaEvaluation.user_id == user_id)
+            if round is None:
+                eval_data = self.db.query(IdeaEvaluation).filter(IdeaEvaluation.user_id == user_id).all()
                 return eval_data
             else:
-                eval_data = self.db.query(IdeaEvaluation).where(IdeaEvaluation.user_id == user_id, IdeaEvaluation.round == round)
+                # Convert int round to string for database query
+                round_str = str(round)
+                eval_data = self.db.query(IdeaEvaluation).filter(IdeaEvaluation.user_id == user_id, IdeaEvaluation.round == round_str).all()
                 return eval_data
 
         except Exception as e:
-            print(f"Error getting user conversations: {e}")
+            print(f"Error getting evaluation data: {e}")
             return []
 
 # Convenience functions
@@ -344,6 +361,11 @@ def create_user(user_data: Dict):
     """Create new user"""
     with DatabaseManager() as db:
         return db.create_user(user_data)
+
+def update_user_agent_type(user_id: int, agent_type: int) -> bool:
+    """Update user's agent type"""
+    with DatabaseManager() as db:
+        return db.update_user_agent_type(user_id, agent_type)
 
 def get_user_profile(user_id: int) -> Optional[Dict]:
     """Get complete user profile"""
@@ -408,6 +430,8 @@ async def execute_db_operations_batch(operations: List[tuple]) -> List[Any]:
                         result = db.get_user_profile(*args)
                     elif func == 'save_memory_vector':
                         result = db.save_memory_vector(*args)
+                    elif func == 'update_user_agent_type':
+                        result = db.update_user_agent_type(*args)
                     else:
                         result = None
                     results.append(result)
@@ -439,3 +463,10 @@ async def get_user_profile_async(user_id: int) -> Optional[Dict]:
         ('get_user_profile', (user_id,))
     ])
     return results[0] if results else None
+
+async def update_user_agent_type_async(user_id: int, agent_type: int) -> bool:
+    """Update user's agent type - optimized for batching"""
+    results = await execute_db_operations_batch([
+        ('update_user_agent_type', (user_id, agent_type))
+    ])
+    return results[0] if results else False

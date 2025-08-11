@@ -321,8 +321,8 @@ async def register_user(user_data: UserRegistration):
         agent_type = 1 if int(str(user_id)[-1]) % 2 == 1 else 2
         
         # Update the user's agent_type in the database
-        # from agents.database import update_user_agent_type
-        # update_user_agent_type(user_id, agent_type)
+        from agents.database import update_user_agent_type
+        update_user_agent_type(user_id, agent_type)
          # Prepare response data
         resp_data = {
             "user_id": user_id,
@@ -414,10 +414,14 @@ async def post_agent(input: ChatInput, current_user: Dict = Depends(get_current_
 
     # Select agent and model based on mode
     if input.mode == "eval":
-        # Assign agent based on user ID for load balancing
-        assigned_agent = agent1 if int(str(user_id)[-1]) % 2 == 1 else agent2
+        # Get user's assigned agent_type from database
+        from agents.database import get_user_profile
+        user_profile = get_user_profile(user_id)
+        agent_type = user_profile.get("agent_type", 1) if user_profile else 1
+        
+        # Assign agent based on stored agent_type
+        assigned_agent = agent1 if agent_type == 1 else agent2
         model = "o3"  # Using o3 model with proper parameters
-        agent_type = 1 if int(str(user_id)[-1]) % 2 == 1 else 2
     elif input.mode == "chat":
         assigned_agent = chatbot_agent
         model = "gpt-4o-mini"
@@ -449,7 +453,7 @@ Please respond to the current message while considering the relevant context fro
     history.append(("User", enhanced_prompt))
 
     # Call agent with enhanced prompt and conversation history
-    agent_reply = await run_agent(assigned_agent, enhanced_prompt, history, model)
+    agent_reply = await run_agent(assigned_agent, user_id, enhanced_prompt, history, model, input.mode)
     
     # Store agent reply in database
     await save_conversation_message_async(user_id, agent_reply, "assistant", input.mode, agent_type)
