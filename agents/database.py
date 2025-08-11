@@ -163,6 +163,20 @@ class DatabaseManager:
             print(f"Error creating user: {e}")
             return None
     
+    def update_user_agent_type(self, user_id: int, agent_type: int) -> bool:
+        """Update user's agent type using ORM"""
+        try:
+            user = self.db.query(User).filter(User.user_id == user_id).first()
+            if user:
+                user.agent_type = agent_type
+                self.db.commit()
+                return True
+            return False
+        except Exception as e:
+            self.db.rollback()
+            print(f"Error updating user agent type: {e}")
+            return False
+    
     def get_user_profile(self, user_id: int) -> Optional[Dict]:
         """Get complete user profile using ORM"""
         try:
@@ -172,6 +186,7 @@ class DatabaseManager:
                     "user_id": user.user_id,
                     "email": user.email,
                     "dob": user.dob,
+                    "agent_type": user.agent_type,
                     "gender": user.gender,
                     "education_field": user.education_field,
                     "education_level": user.education_level,
@@ -347,6 +362,11 @@ def create_user(user_data: Dict) -> Optional[Column[int]]:
     with DatabaseManager() as db:
         return db.create_user(user_data)
 
+def update_user_agent_type(user_id: int, agent_type: int) -> bool:
+    """Update user's agent type"""
+    with DatabaseManager() as db:
+        return db.update_user_agent_type(user_id, agent_type)
+
 def get_user_profile(user_id: int) -> Optional[Dict]:
     """Get complete user profile"""
     with DatabaseManager() as db:
@@ -406,6 +426,8 @@ async def execute_db_operations_batch(operations: List[tuple]) -> List[Any]:
                         result = db.get_user_profile(*args)
                     elif func == 'save_memory_vector':
                         result = db.save_memory_vector(*args)
+                    elif func == 'update_user_agent_type':
+                        result = db.update_user_agent_type(*args)
                     else:
                         result = None
                     results.append(result)
@@ -437,3 +459,10 @@ async def get_user_profile_async(user_id: int) -> Optional[Dict]:
         ('get_user_profile', (user_id,))
     ])
     return results[0] if results else None
+
+async def update_user_agent_type_async(user_id: int, agent_type: int) -> bool:
+    """Update user's agent type - optimized for batching"""
+    results = await execute_db_operations_batch([
+        ('update_user_agent_type', (user_id, agent_type))
+    ])
+    return results[0] if results else False
