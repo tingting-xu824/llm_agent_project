@@ -312,7 +312,6 @@ async def register_user(user_data: UserRegistration):
         
         # Create user using database module
         result = create_user(db_user_data)
-        create_evaluation_round_data(user_id=user_id, problem="", solution="", ai_feedback=None, round=1,time_remaining=EVALUATION_ROUND_1_TIME)
         user_id, error_type = result
         
         if not user_id:
@@ -346,6 +345,8 @@ async def register_user(user_data: UserRegistration):
         update_success = update_user_agent_type(user_id, agent_type)
         if not update_success:
             print(f"Warning: Failed to update agent_type for user {user_id}")
+            
+        create_evaluation_round_data(user_id=user_id, problem="", solution="", ai_feedback=None, round=1,time_remaining=EVALUATION_ROUND_1_TIME)
          # Prepare response data
         resp_data = {
             "user_id": user_id,
