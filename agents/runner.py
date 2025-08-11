@@ -115,7 +115,7 @@ class AIServiceManager:
         else:
             raise Exception(f"All API keys failed for operation: {operation}")
     
-    async def run_agent(self, agent, prompt: str, model: str = None) -> str:
+    async def run_agent(self, agent, prompt: str, model: str | None = None) -> str:
         """
         Execute an agent with the given prompt using OpenAI API
         Priority: Chat keys (1,2,3) -> Shared keys (2,3,4)

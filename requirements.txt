@@ -1,6 +1,5 @@
 # Core AI dependencies
 openai>=1.10.0
-numpy==1.26.4
 
 # Web framework and API dependencies
 fastapi>=0.100.0
@@ -17,3 +16,5 @@ redis>=4.5.0
 
 # Utility dependencies
 python-dotenv>=1.0.0
+
+sklearn

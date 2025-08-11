@@ -134,7 +134,7 @@ class MemorySystem:
             print(f"Error creating memory context: {e}")
             return ""
     
-    def store_memory(self, user_id: int, content: str, metadata: Dict = None) -> bool:
+    def store_memory(self, user_id: int, content: str, metadata: Dict | None = None) -> bool:
         """
         Store memory for user (synchronous wrapper)
         
@@ -161,7 +161,7 @@ class MemorySystem:
                 self._store_memory_async(user_id, content, metadata)
             )
     
-    async def _store_memory_async(self, user_id: int, content: str, metadata: Dict = None) -> bool:
+    async def _store_memory_async(self, user_id: int, content: str, metadata: Dict | None = None) -> bool:
         """
         Store memory for user (async implementation)
         
@@ -244,7 +244,7 @@ class MemorySystem:
             print(f"Error checking memory trigger: {e}")
             return False, []
     
-    async def create_memory_async(self, user_id: int, mode: str, triggers: List[str], agent_type: int = None) -> None:
+    async def create_memory_async(self, user_id: int, mode: str, triggers: List[str], agent_type: int | None = None) -> None:
         """
         Asynchronously create memory from conversations
         

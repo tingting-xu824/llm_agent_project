@@ -9,6 +9,9 @@ from datetime import datetime, date
 # Database configuration
 DATABASE_URL = os.getenv("DATABASE_URL")
 
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL is not defined in .env")
+
 # Create SQLAlchemy engine
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -124,7 +127,7 @@ class DatabaseManager:
             print(f"Error getting user by email and DOB: {e}")
             return None
     
-    def create_user(self, user_data: Dict) -> Optional[int]:
+    def create_user(self, user_data: Dict) -> Optional[Column[int]]:
         """Create new user using ORM"""
         try:
             new_user = User(**user_data)
@@ -170,7 +173,7 @@ class DatabaseManager:
             print(f"Error getting user profile: {e}")
             return None
     
-    def save_conversation_message(self, user_id: int, message: str, role: str, mode: str, agent_type: int) -> Optional[int]:
+    def save_conversation_message(self, user_id: int, message: str, role: str, mode: str, agent_type: int) -> Optional[Column[int]]:
         """Save a conversation message to database"""
         try:
             # Get the next sequence number for this user
@@ -227,7 +230,7 @@ class DatabaseManager:
             print(f"Error getting user conversations: {e}")
             return []
     
-    def save_memory_vector(self, user_id: int, content: str, embedding: List[float], metadata: Dict = None) -> Optional[int]:
+    def save_memory_vector(self, user_id: int, content: str, embedding: List[float], metadata: Dict | None = None) -> Optional[Column[int]]:
         """Save a memory vector for RAG functionality"""
         try:
             memory_vector = MemoryVector(
@@ -251,7 +254,6 @@ class DatabaseManager:
         """Get relevant memories using vector similarity search"""
         try:
             import json
-            import numpy as np
             from sklearn.metrics.pairwise import cosine_similarity
             
             # Get all memory vectors for the user
@@ -266,7 +268,7 @@ class DatabaseManager:
             similarities = []
             for mv in memory_vectors:
                 try:
-                    embedding = json.loads(mv.embedding)
+                    embedding = json.loads(str(mv.embedding))
                     similarity = cosine_similarity([query_embedding], [embedding])[0][0]
                     similarities.append((similarity, mv))
                 except Exception as e:
@@ -302,7 +304,7 @@ def get_user_by_email_and_dob(email: str, date_of_birth: date) -> Optional[Dict]
     with DatabaseManager() as db:
         return db.get_user_by_email_and_dob(email, date_of_birth)
 
-def create_user(user_data: Dict) -> Optional[int]:
+def create_user(user_data: Dict) -> Optional[Column[int]]:
     """Create new user"""
     with DatabaseManager() as db:
         return db.create_user(user_data)
@@ -317,7 +319,7 @@ def get_user_profile(user_id: int) -> Optional[Dict]:
     with DatabaseManager() as db:
         return db.get_user_profile(user_id)
 
-def save_conversation_message(user_id: int, message: str, role: str, mode: str, agent_type: int) -> Optional[int]:
+def save_conversation_message(user_id: int, message: str, role: str, mode: str, agent_type: int) -> Optional[Column[int]]:
     """Save a conversation message"""
     with DatabaseManager() as db:
         return db.save_conversation_message(user_id, message, role, mode, agent_type)
@@ -327,7 +329,7 @@ def get_user_conversations(user_id: int, limit: int = 50) -> List[Dict]:
     with DatabaseManager() as db:
         return db.get_user_conversations(user_id, limit)
 
-def save_memory_vector(user_id: int, content: str, embedding: List[float], metadata: Dict = None) -> Optional[int]:
+def save_memory_vector(user_id: int, content: str, embedding: List[float], metadata: Dict | None = None) -> Optional[Column[int]]:
     """Save a memory vector"""
     with DatabaseManager() as db:
         return db.save_memory_vector(user_id, content, embedding, metadata)

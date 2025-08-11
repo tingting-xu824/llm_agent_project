@@ -63,7 +63,7 @@ class MemoryManager:
         """Safe database connection context manager"""
         conn = None
         try:
-            conn = self.connection_pool.getconn(timeout=30)
+            conn = self.connection_pool.getconn()
             yield conn
             conn.commit()
         except psycopg2.pool.PoolError as e:
@@ -160,7 +160,7 @@ class MemoryManager:
             return f"Memory extraction failed for conversation at {datetime.now()}"
     
     async def store_memory(self, user_id: int, memory_type: str, source_conversations: str, 
-                          memory_content: str, embedding: List[float], metadata: Dict = None) -> int:
+                          memory_content: str, embedding: List[float], metadata: Dict | None = None) -> int:
         """Store memory vector in database"""
         try:
             with self.get_db_connection() as conn:
@@ -256,8 +256,8 @@ class MemoryManager:
         return len(triggers) > 0, triggers
     
     async def create_memory_from_conversations(self, user_id: int, memory_type: str, 
-                                              conversation_ids: List[int] = None, 
-                                              agent_type: int = None) -> Optional[int]:
+                                              conversation_ids: List[int] | None = None, 
+                                              agent_type: int | None = None) -> Optional[int]:
         """Create memory from recent conversations"""
         try:
             # Get conversations
@@ -303,7 +303,7 @@ class MemoryManager:
             return None
     
     async def create_memory_async(self, user_id: int, mode: str, triggers: List[str], 
-                                 agent_type: int = None) -> None:
+                                 agent_type: int | None = None) -> None:
         """Asynchronously create memory without blocking API response"""
         try:
             memory_type = "round_summary" if mode == "eval" else "conversation_chunk"

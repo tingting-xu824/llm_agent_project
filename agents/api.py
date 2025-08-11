@@ -170,7 +170,7 @@ def save_user_conversation(user_id: int, conversation: list[tuple[str, str]]):
     # Fallback to in-memory storage
     in_memory_conversations[user_id] = conversation
 
-def get_user_last_request_time(user_id: int) -> datetime:
+def get_user_last_request_time(user_id: int) -> datetime | None :
     """Get user's last request time from Redis for rate limiting, fallback to memory"""
     if redis_client:
         try:
@@ -262,11 +262,13 @@ async def login_user(login_data: UserLogin):
             )
         
         # Update last login time
-        update_user_login_time(user["user_id"])
+        # update_user_login_time(user["user_id"])
         
         return {
             "user_id": user["user_id"],
             "email": user["email"],
+            "first_name": user["first_name"],
+            "last_name": user["last_name"],
             "token": user["token"],
             "message": "Login successful"
         }
