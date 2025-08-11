@@ -280,7 +280,7 @@ class MemoryManager:
         """Convert vector to PostgreSQL format"""
         return f"[{','.join(map(str, vector))}]"
     
-    async def get_conversations_by_user(self, user_id: int, limit: int = 50) -> List[Dict]:
+    def get_conversations_by_user(self, user_id: int, limit: int = 50) -> List[Dict]:
         """Retrieve recent conversations for a user"""
         try:
             with self.get_db_connection() as conn:
@@ -297,7 +297,7 @@ class MemoryManager:
             logger.error(f"Failed to get conversations for user {user_id}: {e}")
             return []
     
-    async def get_conversations_by_ids(self, conversation_ids: List[int]) -> List[Dict]:
+    def get_conversations_by_ids(self, conversation_ids: List[int]) -> List[Dict]:
         """Get specific conversations by their IDs"""
         try:
             with self.get_db_connection() as conn:
@@ -333,7 +333,7 @@ class MemoryManager:
             logger.error(f"Failed to extract memory: {e}")
             return f"Memory extraction failed for conversation at {datetime.now()}"
     
-    async def store_memory(self, user_id: int, memory_type: str, source_conversations: str,
+    def store_memory(self, user_id: int, memory_type: str, source_conversations: str,
                           memory_content: str, embedding: List[float], metadata: Optional[Dict] = None) -> int:
         """Store memory vector in database"""
         try:
@@ -365,6 +365,19 @@ class MemoryManager:
         try:
             query_embedding = await self.get_embedding_with_cache(query_text)
             
+            # Use asyncio to run the database operation in a thread pool
+            loop = asyncio.get_event_loop()
+            results = await loop.run_in_executor(None, self._retrieve_memories_sync, user_id, query_embedding, top_k)
+            logger.debug(f"Retrieved {len(results)} relevant memories for user {user_id}")
+            return results
+                
+        except Exception as e:
+            logger.error(f"Failed to retrieve memories: {e}")
+            return []
+    
+    def _retrieve_memories_sync(self, user_id: int, query_embedding: List[float], top_k: int) -> List[Dict]:
+        """Synchronous version of retrieve_relevant_memories for thread pool execution"""
+        try:
             with self.get_db_connection() as conn:
                 cursor = conn.cursor(cursor_factory=RealDictCursor)
                 cursor.execute("""
@@ -380,12 +393,9 @@ class MemoryManager:
                     self.vector_to_sql(query_embedding),
                     top_k
                 ))
-                results = cursor.fetchall()
-                logger.debug(f"Retrieved {len(results)} relevant memories for user {user_id}")
-                return results
-                
+                return cursor.fetchall()
         except Exception as e:
-            logger.error(f"Failed to retrieve memories: {e}")
+            logger.error(f"Failed to retrieve memories (sync): {e}")
             return []
     
     def detect_important_content(self, message: str) -> bool:
@@ -434,11 +444,11 @@ class MemoryManager:
                                               agent_type: Optional[int] = None) -> Optional[int]:
         """Create memory from recent conversations"""
         try:
-            # Get conversations
+            # Get conversations (now synchronous)
             if conversation_ids:
-                conversations = await self.get_conversations_by_ids(conversation_ids)
+                conversations = self.get_conversations_by_ids(conversation_ids)
             else:
-                conversations = await self.get_conversations_by_user(user_id, limit=20)
+                conversations = self.get_conversations_by_user(user_id, limit=20)
             
             if not conversations:
                 logger.warning(f"No conversations found for user {user_id}")
@@ -460,14 +470,11 @@ class MemoryManager:
                 "created_by": "system"
             }
             
-            # Store memory
-            memory_id = await self.store_memory(
-                user_id=user_id,
-                memory_type=memory_type,
-                source_conversations=json.dumps([c['conversation_id'] for c in conversations]),
-                memory_content=memory_content,
-                embedding=embedding,
-                metadata=metadata
+            # Store memory (now synchronous, run in thread pool)
+            loop = asyncio.get_event_loop()
+            memory_id = await loop.run_in_executor(None, self.store_memory,
+                user_id, memory_type, json.dumps([c['conversation_id'] for c in conversations]),
+                memory_content, embedding, metadata
             )
             
             return memory_id
@@ -486,7 +493,7 @@ class MemoryManager:
         except Exception as e:
             logger.error(f"Background memory creation failed for user {user_id}: {e}")
     
-    async def get_user_memory_count(self, user_id: int) -> int:
+    def get_user_memory_count(self, user_id: int) -> int:
         """Get total number of memories stored for a user"""
         try:
             with self.get_db_connection() as conn:
@@ -497,7 +504,7 @@ class MemoryManager:
             logger.error(f"Failed to get memory count for user {user_id}: {e}")
             return 0
     
-    async def get_recent_memories(self, user_id: int, limit: int = 5) -> List[Dict]:
+    def get_recent_memories(self, user_id: int, limit: int = 5) -> List[Dict]:
         """Get recent memories for a user"""
         try:
             with self.get_db_connection() as conn:
