@@ -4,7 +4,8 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.sql import func
 import os
 from typing import Optional, Dict, List, Any
-from datetime import datetime, date
+from datetime import date
+from agents.constants import EVALUATION_ROUND_TIMINGS
 
 # Database configuration
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -442,7 +443,7 @@ class DatabaseManager:
                     solution="",
                     ai_feedback=None,
                     round=next_round,
-                    time_remaining=0  # Will be set by the system
+                    time_remaining= EVALUATION_ROUND_TIMINGS.get(next_round)
                 )
                 self.db.add(new_record)
             

@@ -5,6 +5,13 @@ EVALUATION_ROUND_FINAL_TIME=30 * 60
 CHAT_TIME=24 * 60 * 60
 INTERVIEW_TIME=30 * 60
 
+EVALUATION_ROUND_TIMINGS = {
+    1: EVALUATION_ROUND_1_TIME,
+    2: EVALUATION_ROUND_2_TIME,
+    3: EVALUATION_ROUND_3_TIME,
+    4: EVALUATION_ROUND_FINAL_TIME
+}
+
 # Word count requirements for evaluation rounds
 # Format: (problem_min, problem_max, solution_min, solution_max)
 
