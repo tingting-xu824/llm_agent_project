@@ -77,13 +77,15 @@ class MemorySystem:
         
         try:
             embedding = await self._generate_embedding(content)
-            memory_id = await self.memory_manager.store_memory(
-                user_id=user_id,
-                memory_type=metadata.get('type', 'general') if metadata else 'general',
-                source_conversations="",
-                memory_content=content,
-                embedding=embedding,
-                metadata=metadata or {}
+            # Run synchronous store_memory in thread pool
+            loop = asyncio.get_event_loop()
+            memory_id = await loop.run_in_executor(None, self.memory_manager.store_memory,
+                user_id,
+                metadata.get('type', 'general') if metadata else 'general',
+                "",
+                content,
+                embedding,
+                metadata or {}
             )
             return memory_id is not None
         except Exception as e:
@@ -128,7 +130,9 @@ class MemorySystem:
             return 0
         
         try:
-            return await self.memory_manager.get_user_memory_count(user_id)
+            # Run synchronous get_user_memory_count in thread pool
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(None, self.memory_manager.get_user_memory_count, user_id)
         except Exception as e:
             print(f"Error getting memory count: {e}")
             return 0
@@ -139,7 +143,9 @@ class MemorySystem:
             return []
         
         try:
-            return await self.memory_manager.get_recent_memories(user_id, limit)
+            # Run synchronous get_recent_memories in thread pool
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(None, self.memory_manager.get_recent_memories, user_id, limit)
         except Exception as e:
             print(f"Error getting recent memories: {e}")
             return []
