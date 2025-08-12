@@ -381,6 +381,94 @@ class DatabaseManager:
             print(f"Error getting evaluation data: {e}")
             return []
 
+    def get_evaluation_record_by_round(self, user_id: int, round: int) -> Optional[IdeaEvaluation]:
+        """Get specific evaluation record for user and round"""
+        try:
+            record = self.db.query(IdeaEvaluation).filter(
+                IdeaEvaluation.user_id == user_id,
+                IdeaEvaluation.round == round
+            ).first()
+            return record
+        except Exception as e:
+            print(f"Error getting evaluation record by round: {e}")
+            return None
+
+    def update_evaluation_record(self, user_id: int, round: int, problem: str, solution: str, ai_feedback: str) -> bool:
+        """Update problem, solution, and ai_feedback for a specific evaluation record"""
+        try:
+            updated_rows = (
+                self.db.query(IdeaEvaluation)
+                .filter_by(user_id=user_id, round=round)
+                .update({
+                    IdeaEvaluation.problem: problem,
+                    IdeaEvaluation.solution: solution,
+                    IdeaEvaluation.ai_feedback: ai_feedback
+                })
+            )
+            if updated_rows == 0:
+                self.db.rollback()
+                return False
+            self.db.commit()
+            return True
+        except Exception as e:
+            self.db.rollback()
+            print(f"Error updating evaluation record: {e}")
+            return False
+
+    def complete_evaluation_round(self, user_id: int, round: int) -> bool:
+        """Mark evaluation round as completed and create next round record"""
+        try:
+            # First, mark current round as completed
+            updated_rows = (
+                self.db.query(IdeaEvaluation)
+                .filter_by(user_id=user_id, round=round)
+                .update({
+                    IdeaEvaluation.completed_at: func.current_timestamp()
+                })
+            )
+            if updated_rows == 0:
+                self.db.rollback()
+                return False
+            
+            # Create next round record if not round 4 (final submission)
+            next_round = round + 1
+            if next_round <= 4:
+                new_record = IdeaEvaluation(
+                    user_id=user_id,
+                    problem="",
+                    solution="",
+                    ai_feedback=None,
+                    round=next_round,
+                    time_remaining=0  # Will be set by the system
+                )
+                self.db.add(new_record)
+            
+            self.db.commit()
+            return True
+        except Exception as e:
+            self.db.rollback()
+            print(f"Error completing evaluation round: {e}")
+            return False
+
+    def check_previous_round_completed(self, user_id: int, round: int) -> bool:
+        """Check if previous round has been completed"""
+        try:
+            if round == 1:
+                return True  # First round doesn't need previous completion check
+            
+            previous_record = self.db.query(IdeaEvaluation).filter(
+                IdeaEvaluation.user_id == user_id,
+                IdeaEvaluation.round == round - 1
+            ).first()
+            
+            if not previous_record:
+                return False
+            
+            return previous_record.completed_at is not None
+        except Exception as e:
+            print(f"Error checking previous round completion: {e}")
+            return False
+
 # Convenience functions
 def get_user_by_token(token: str) -> Optional[Dict]:
     """Get user by token"""
@@ -438,6 +526,26 @@ def create_evaluation_round_data(user_id: int, problem: str, solution: str, ai_f
 def update_evaluation_round_time(user_id: int, round: int):
     with DatabaseManager() as db:
         return db.update_evaluation_round_time(user_id, round)
+
+def get_evaluation_record_by_round(user_id: int, round: int):
+    """Get specific evaluation record for user and round"""
+    with DatabaseManager() as db:
+        return db.get_evaluation_record_by_round(user_id, round)
+
+def update_evaluation_record(user_id: int, round: int, problem: str, solution: str, ai_feedback: str) -> bool:
+    """Update problem, solution, and ai_feedback for a specific evaluation record"""
+    with DatabaseManager() as db:
+        return db.update_evaluation_record(user_id, round, problem, solution, ai_feedback)
+
+def complete_evaluation_round(user_id: int, round: int) -> bool:
+    """Mark evaluation round as completed and create next round record"""
+    with DatabaseManager() as db:
+        return db.complete_evaluation_round(user_id, round)
+
+def check_previous_round_completed(user_id: int, round: int) -> bool:
+    """Check if previous round has been completed"""
+    with DatabaseManager() as db:
+        return db.check_previous_round_completed(user_id, round)
         
 # Async database functions using thread pool for synchronous operations
 # Note: These are not truly async I/O but provide async interface for compatibility
@@ -477,6 +585,30 @@ async def get_evaluation_data_async(user_id: int, round: int | None = None):
     import asyncio
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, get_evaluation_data, user_id, round)
+
+async def get_evaluation_record_by_round_async(user_id: int, round: int):
+    """Get specific evaluation record for user and round using thread pool"""
+    import asyncio
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, get_evaluation_record_by_round, user_id, round)
+
+async def update_evaluation_record_async(user_id: int, round: int, problem: str, solution: str, ai_feedback: str) -> bool:
+    """Update evaluation record using thread pool"""
+    import asyncio
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, update_evaluation_record, user_id, round, problem, solution, ai_feedback)
+
+async def complete_evaluation_round_async(user_id: int, round: int) -> bool:
+    """Complete evaluation round using thread pool"""
+    import asyncio
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, complete_evaluation_round, user_id, round)
+
+async def check_previous_round_completed_async(user_id: int, round: int) -> bool:
+    """Check previous round completion using thread pool"""
+    import asyncio
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, check_previous_round_completed, user_id, round)
 
 async def create_user_async(user_data: Dict) -> tuple[Optional[Column[int]], Optional[str]]:
     """Create user using thread pool"""

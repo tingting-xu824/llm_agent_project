@@ -19,9 +19,19 @@ from agents.database import (
     get_user_conversations,
     create_evaluation_round_data,
     update_evaluation_round_time,
-    get_evaluation_data
+    get_evaluation_data,
+    get_evaluation_record_by_round_async,
+    update_evaluation_record_async,
+    complete_evaluation_round_async,
+    check_previous_round_completed_async
 )
-from agents.constants import EVALUATION_ROUND_1_TIME
+from agents.constants import (
+    EVALUATION_ROUND_1_TIME,
+    ROUND_1_PROBLEM_MIN_WORDS, ROUND_1_PROBLEM_MAX_WORDS, ROUND_1_SOLUTION_MIN_WORDS, ROUND_1_SOLUTION_MAX_WORDS,
+    ROUND_2_PROBLEM_MIN_WORDS, ROUND_2_PROBLEM_MAX_WORDS, ROUND_2_SOLUTION_MIN_WORDS, ROUND_2_SOLUTION_MAX_WORDS,
+    ROUND_3_PROBLEM_MIN_WORDS, ROUND_3_PROBLEM_MAX_WORDS, ROUND_3_SOLUTION_MIN_WORDS, ROUND_3_SOLUTION_MAX_WORDS,
+    ROUND_4_PROBLEM_MIN_WORDS, ROUND_4_PROBLEM_MAX_WORDS, ROUND_4_SOLUTION_MIN_WORDS, ROUND_4_SOLUTION_MAX_WORDS
+)
 from .memory_system import memory_system
 from fastapi import Query
 from sqlalchemy import Column
@@ -159,6 +169,32 @@ class InterviewChat(BaseModel):
 class InterviewHistory(BaseModel):
     """Interview history request model"""
     user_id: int
+
+class EvaluationSubmission(BaseModel):
+    """Evaluation submission model for problem and solution"""
+    problem: str
+    solution: str
+
+def get_round_word_requirements(round: int) -> tuple[int, int, int, int]:
+    """Get word count requirements for problem and solution based on round"""
+    if round == 1:
+        return ROUND_1_PROBLEM_MIN_WORDS, ROUND_1_PROBLEM_MAX_WORDS, ROUND_1_SOLUTION_MIN_WORDS, ROUND_1_SOLUTION_MAX_WORDS
+    elif round == 2:
+        return ROUND_2_PROBLEM_MIN_WORDS, ROUND_2_PROBLEM_MAX_WORDS, ROUND_2_SOLUTION_MIN_WORDS, ROUND_2_SOLUTION_MAX_WORDS
+    elif round == 3:
+        return ROUND_3_PROBLEM_MIN_WORDS, ROUND_3_PROBLEM_MAX_WORDS, ROUND_3_SOLUTION_MIN_WORDS, ROUND_3_SOLUTION_MAX_WORDS
+    elif round == 4:
+        return ROUND_4_PROBLEM_MIN_WORDS, ROUND_4_PROBLEM_MAX_WORDS, ROUND_4_SOLUTION_MIN_WORDS, ROUND_4_SOLUTION_MAX_WORDS
+    else:
+        return ROUND_1_PROBLEM_MIN_WORDS, ROUND_1_PROBLEM_MAX_WORDS, ROUND_1_SOLUTION_MIN_WORDS, ROUND_1_SOLUTION_MAX_WORDS  # Default fallback
+
+def count_words(text: str) -> int:
+    """Count words in text (simple implementation)"""
+    if not text:
+        return 0
+    # Split by whitespace and filter out empty strings
+    words = [word for word in text.split() if word.strip()]
+    return len(words)
 
 async def get_current_user(request: Request) -> Dict:
     """Dependency to get current user from token"""
@@ -436,6 +472,249 @@ async def update_evaluation_time_remaining(
             )
     user_id = current_user["user_id"]
     return update_evaluation_round_time(user_id, round)
+
+@app.post("/evaluation")
+async def submit_evaluation(
+    submission: EvaluationSubmission,
+    current_user: Dict = Depends(get_current_user),
+    round: int = Query(..., ge=1, le=4, description="Evaluation round (1, 2, 3, or 4)")
+):
+    """
+    Submit problem and solution for evaluation round and get AI feedback
+    
+    This endpoint:
+    1. Checks if evaluation record exists for user_id and round
+    2. Checks if previous round is completed (except for round 1)
+    3. Updates problem and solution columns
+    4. Calls AI agent to generate feedback
+    5. Saves AI feedback and returns response
+    """
+    user_id = current_user["user_id"]
+    
+    try:
+        # Check if previous round is completed (except for round 1)
+        if round > 1:
+            previous_completed = await check_previous_round_completed_async(user_id, round)
+            if not previous_completed:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Previous round {round - 1} must be completed before starting round {round}"
+                )
+        
+        # Check if evaluation record exists for this user and round
+        evaluation_record = await get_evaluation_record_by_round_async(user_id, round)
+        if not evaluation_record:
+            raise HTTPException(
+                status_code=400,
+                detail=f"No evaluation record found for user {user_id} and round {round}"
+            )
+        
+        # Get word count requirements for this round
+        problem_min_words, problem_max_words, solution_min_words, solution_max_words = get_round_word_requirements(round)
+        
+        # Validate input data and word count
+        if not submission.problem.strip():
+            raise HTTPException(
+                status_code=400,
+                detail="Problem description cannot be empty"
+            )
+        
+        if not submission.solution.strip():
+            raise HTTPException(
+                status_code=400,
+                detail="Solution description cannot be empty"
+            )
+        
+        # Check word count requirements
+        problem_word_count = count_words(submission.problem)
+        solution_word_count = count_words(submission.solution)
+        
+        if problem_word_count < problem_min_words:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Problem description must be at least {problem_min_words} words. Current: {problem_word_count} words"
+            )
+        
+        if problem_word_count > problem_max_words:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Problem description must not exceed {problem_max_words} words. Current: {problem_word_count} words"
+            )
+        
+        if solution_word_count < solution_min_words:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Solution description must be at least {solution_min_words} words. Current: {solution_word_count} words"
+            )
+        
+        if solution_word_count > solution_max_words:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Solution description must not exceed {solution_max_words} words. Current: {solution_word_count} words"
+            )
+        
+        # Get user's assigned agent_type for AI feedback
+        agent_type = current_user.get("agent_type", 1)
+        
+        # Select agent based on user's agent_type
+        assigned_agent = agent1 if agent_type == 1 else agent2
+        
+        # Prepare prompt for AI agent with round-specific requirements
+        ai_prompt = f"""Please provide feedback on the following problem and solution for Round {round}:
+
+Problem: {submission.problem}
+
+Solution: {submission.solution}
+
+Please provide constructive feedback focusing on:
+1. Clarity and feasibility of the solution
+2. Potential improvements or alternatives
+3. Any concerns or considerations
+4. Overall assessment of the idea
+
+Round {round} Requirements:
+- Problem: {problem_min_words} ≤ x ≤ {problem_max_words} words (Current: {problem_word_count} words)
+- Solution: {solution_min_words} ≤ x ≤ {solution_max_words} words (Current: {solution_word_count} words)
+
+Please provide a comprehensive but concise response (200-500 words)."""
+        
+        # Call AI agent to generate feedback
+        ai_feedback = await run_agent(assigned_agent, user_id, ai_prompt, [], "o3", "eval")
+        
+        # Update evaluation record with problem, solution, and AI feedback
+        update_success = await update_evaluation_record_async(
+            user_id, 
+            round, 
+            submission.problem, 
+            submission.solution, 
+            ai_feedback
+        )
+        
+        if not update_success:
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to update evaluation record"
+            )
+        
+        return {
+            "message": "Evaluation submitted successfully",
+            "ai_feedback": ai_feedback,
+            "round": round,
+            "user_id": user_id
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error in submit_evaluation: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="Internal server error occurred while processing evaluation"
+        )
+
+@app.post("/evaluation/complete")
+async def complete_evaluation_round(
+    current_user: Dict = Depends(get_current_user),
+    round: int = Query(..., ge=1, le=4, description="Evaluation round to complete (1, 2, 3, or 4)")
+):
+    """
+    Complete an evaluation round and create next round record
+    
+    This endpoint:
+    1. Checks if evaluation record exists for user_id and round
+    2. Checks if previous round is completed (except for round 1)
+    3. Sets completed_at timestamp for current round
+    4. Creates new record for next round (if not round 4)
+    5. Returns success response
+    """
+    user_id = current_user["user_id"]
+    
+    try:
+        # Check if previous round is completed (except for round 1)
+        if round > 1:
+            previous_completed = await check_previous_round_completed_async(user_id, round)
+            if not previous_completed:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Previous round {round - 1} must be completed before completing round {round}"
+                )
+        
+        # Check if evaluation record exists for this user and round
+        evaluation_record = await get_evaluation_record_by_round_async(user_id, round)
+        if not evaluation_record:
+            raise HTTPException(
+                status_code=400,
+                detail=f"No evaluation record found for user {user_id} and round {round}"
+            )
+        
+        # Get word count requirements for this round
+        problem_min_words, problem_max_words, solution_min_words, solution_max_words = get_round_word_requirements(round)
+        
+        # Check if current round has been submitted (has problem and solution)
+        if not evaluation_record.problem.strip() or not evaluation_record.solution.strip():
+            raise HTTPException(
+                status_code=400,
+                detail=f"Round {round} must have problem and solution submitted before it can be completed"
+            )
+        
+        # Check word count requirements for completion
+        problem_word_count = count_words(evaluation_record.problem)
+        solution_word_count = count_words(evaluation_record.solution)
+        
+        if problem_word_count < problem_min_words:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Round {round} problem must be at least {problem_min_words} words. Current: {problem_word_count} words"
+            )
+        
+        if problem_word_count > problem_max_words:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Round {round} problem must not exceed {problem_max_words} words. Current: {problem_word_count} words"
+            )
+        
+        if solution_word_count < solution_min_words:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Round {round} solution must be at least {solution_min_words} words. Current: {solution_word_count} words"
+            )
+        
+        if solution_word_count > solution_max_words:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Round {round} solution must not exceed {solution_max_words} words. Current: {solution_word_count} words"
+            )
+        
+        # Complete the round
+        completion_success = await complete_evaluation_round_async(user_id, round)
+        
+        if not completion_success:
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to complete evaluation round"
+            )
+        
+        # Prepare response message
+        if round == 4:
+            message = f"Round {round} completed successfully. This was the final round."
+        else:
+            message = f"Round {round} completed successfully. Round {round + 1} is now available."
+        
+        return {
+            "message": message,
+            "round": round,
+            "user_id": user_id,
+            "completed_at": datetime.utcnow().isoformat()
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error in complete_evaluation_round: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="Internal server error occurred while completing evaluation round"
+        )
 
 @app.post("/agent")
 async def post_agent(input: ChatInput, current_user: Dict = Depends(get_current_user)):

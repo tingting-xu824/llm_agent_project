@@ -12,7 +12,8 @@ psycopg2-binary>=2.9.0
 sqlalchemy>=2.0.0
 
 # Caching and session management
-redis[hiredis]>=4.5.0
+redis>=4.5.0
+aioredis>=2.0.0
 
 # Utility dependencies
 python-dotenv>=1.0.0
