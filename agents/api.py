@@ -4,10 +4,11 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, EmailStr, validator
 from datetime import datetime, timedelta, date
 from typing import Dict, Optional, List
-import redis
+import aioredis
 import json
 import os
 import uuid
+import asyncio
 from agents.agents_backend import agent1, agent2, chatbot_agent, run_agent
 from agents.database import (
     get_user_by_token, 
@@ -49,21 +50,43 @@ REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", None)
 IS_LOCAL = os.getenv("ENV", "dev") == "dev"
 
 # Initialize Redis client for distributed session storage
-try:
-    redis_client = redis.Redis(
-        host=REDIS_HOST,
-        port=REDIS_PORT,
-        db=REDIS_DB,
-        password=REDIS_PASSWORD,
-        decode_responses=True
-    )
-    # Test connection
-    redis_client.ping()
-    print("Redis connection successful")
-except Exception as e:
-    print(f"Warning: Redis connection failed: {e}")
-    print("Falling back to in-memory storage (not suitable for production)")
-    redis_client = None
+redis_client = None
+
+async def init_redis_client():
+    """Initialize async Redis client"""
+    global redis_client
+    try:
+        # Build Redis URL properly
+        if REDIS_PASSWORD:
+            redis_url = f"redis://:{REDIS_PASSWORD}@{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}"
+        else:
+            redis_url = f"redis://{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}"
+        
+        redis_client = await aioredis.from_url(
+            redis_url,
+            encoding="utf-8",
+            decode_responses=True
+        )
+        # Test connection
+        await redis_client.ping()
+        print("Redis connection successful")
+    except Exception as e:
+        print(f"Warning: Redis connection failed: {e}")
+        print("Falling back to in-memory storage (not suitable for production)")
+        redis_client = None
+
+# Initialize Redis on startup
+@app.on_event("startup")
+async def startup_event():
+    await init_redis_client()
+
+# Cleanup Redis connection on shutdown
+@app.on_event("shutdown")
+async def shutdown_event():
+    global redis_client
+    if redis_client:
+        await redis_client.close()
+        print("Redis connection closed")
 
 # Fallback in-memory storage for when Redis is not available
 in_memory_conversations = {}
@@ -146,7 +169,9 @@ async def get_current_user(request: Request) -> Dict:
             detail="Authentication expired!"
         )
 
-    user = get_user_by_token(token)
+    # Get user by token
+    from agents.database import get_user_by_token_async
+    user = await get_user_by_token_async(token)
     
     if not user:
         raise HTTPException(
@@ -164,63 +189,7 @@ def get_user_last_request_key(user_id: int) -> str:
     """Generate Redis key for user rate limiting"""
     return f"user_last_request:{user_id}"
 
-def get_user_conversation(user_id: int) -> list[tuple[str, str]]:
-    """Get user conversation history from Redis, fallback to memory"""
-    if redis_client:
-        try:
-            conversation_key = get_user_conversation_key(user_id)
-            conversation_data = redis_client.get(conversation_key)
-            if conversation_data:
-                return json.loads(conversation_data)
-            return []
-        except Exception as e:
-            print(f"Error getting user conversation from Redis: {e}")
-    
-    # Fallback to in-memory storage
-    return in_memory_conversations.get(user_id, [])
-
-def save_user_conversation(user_id: int, conversation: list[tuple[str, str]]):
-    """Save user conversation history to Redis with 24-hour expiration, fallback to memory"""
-    if redis_client:
-        try:
-            conversation_key = get_user_conversation_key(user_id)
-            # Set expiration to 24 hours for automatic cleanup
-            redis_client.setex(conversation_key, 86400, json.dumps(conversation))
-            return
-        except Exception as e:
-            print(f"Error saving user conversation to Redis: {e}")
-    
-    # Fallback to in-memory storage
-    in_memory_conversations[user_id] = conversation
-
-def get_user_last_request_time(user_id: int) -> datetime | None :
-    """Get user's last request time from Redis for rate limiting, fallback to memory"""
-    if redis_client:
-        try:
-            request_key = get_user_last_request_key(user_id)
-            last_time_str = redis_client.get(request_key)
-            if last_time_str:
-                return datetime.fromisoformat(last_time_str)
-            return None
-        except Exception as e:
-            print(f"Error getting user last request time from Redis: {e}")
-    
-    # Fallback to in-memory storage
-    return in_memory_last_requests.get(user_id)
-
-def save_user_last_request_time(user_id: int, request_time: datetime):
-    """Save user's last request time to Redis with 1-hour expiration, fallback to memory"""
-    if redis_client:
-        try:
-            request_key = get_user_last_request_key(user_id)
-            # Set expiration to 1 hour for rate limiting
-            redis_client.setex(request_key, 3600, request_time.isoformat())
-            return
-        except Exception as e:
-            print(f"Error saving user last request time to Redis: {e}")
-    
-    # Fallback to in-memory storage
-    in_memory_last_requests[user_id] = request_time
+# Note: Synchronous Redis functions removed - use async versions instead
 
 # Async versions of the above functions for use in async endpoints
 async def get_user_conversation_async(user_id: int) -> list[tuple[str, str]]:
@@ -232,8 +201,14 @@ async def get_user_conversation_async(user_id: int) -> list[tuple[str, str]]:
             if conversation_data:
                 return json.loads(conversation_data)
             return []
+        except aioredis.ConnectionError as e:
+            print(f"Redis connection error getting user conversation: {e}")
+        except aioredis.RedisError as e:
+            print(f"Redis error getting user conversation: {e}")
+        except json.JSONDecodeError as e:
+            print(f"JSON decode error in user conversation: {e}")
         except Exception as e:
-            print(f"Error getting user conversation from Redis: {e}")
+            print(f"Unexpected error getting user conversation from Redis: {e}")
     
     # Fallback to in-memory storage
     return in_memory_conversations.get(user_id, [])
@@ -246,8 +221,14 @@ async def save_user_conversation_async(user_id: int, conversation: list[tuple[st
             # Set expiration to 24 hours for automatic cleanup
             await redis_client.setex(conversation_key, 86400, json.dumps(conversation))
             return
+        except aioredis.ConnectionError as e:
+            print(f"Redis connection error saving user conversation: {e}")
+        except aioredis.RedisError as e:
+            print(f"Redis error saving user conversation: {e}")
+        except json.JSONEncodeError as e:
+            print(f"JSON encode error in user conversation: {e}")
         except Exception as e:
-            print(f"Error saving user conversation to Redis: {e}")
+            print(f"Unexpected error saving user conversation to Redis: {e}")
     
     # Fallback to in-memory storage
     in_memory_conversations[user_id] = conversation
@@ -261,8 +242,14 @@ async def get_user_last_request_time_async(user_id: int) -> datetime | None:
             if last_time_str:
                 return datetime.fromisoformat(last_time_str)
             return None
+        except aioredis.ConnectionError as e:
+            print(f"Redis connection error getting user last request time: {e}")
+        except aioredis.RedisError as e:
+            print(f"Redis error getting user last request time: {e}")
+        except ValueError as e:
+            print(f"Invalid datetime format in user last request time: {e}")
         except Exception as e:
-            print(f"Error getting user last request time from Redis: {e}")
+            print(f"Unexpected error getting user last request time from Redis: {e}")
     
     # Fallback to in-memory storage
     return in_memory_last_requests.get(user_id)
@@ -275,8 +262,12 @@ async def save_user_last_request_time_async(user_id: int, request_time: datetime
             # Set expiration to 1 hour for rate limiting
             await redis_client.setex(request_key, 3600, request_time.isoformat())
             return
+        except aioredis.ConnectionError as e:
+            print(f"Redis connection error saving user last request time: {e}")
+        except aioredis.RedisError as e:
+            print(f"Redis error saving user last request time: {e}")
         except Exception as e:
-            print(f"Error saving user last request time to Redis: {e}")
+            print(f"Unexpected error saving user last request time to Redis: {e}")
     
     # Fallback to in-memory storage
     in_memory_last_requests[user_id] = request_time
@@ -313,7 +304,8 @@ async def register_user(user_data: UserRegistration):
         }
         
         # Create user using database module
-        result = create_user(db_user_data)
+        from agents.database import create_user_async
+        result = await create_user_async(db_user_data)
         user_id, error_type = result
         
         if not user_id:
@@ -343,12 +335,13 @@ async def register_user(user_data: UserRegistration):
         agent_type = 1 if int(str(user_id)[-1]) % 2 == 1 else 2
         
         # Update the user's agent_type in the database
-        from agents.database import update_user_agent_type
-        update_success = update_user_agent_type(user_id, agent_type)
+        from agents.database import update_user_agent_type_async, create_evaluation_record_async
+        update_success = await update_user_agent_type_async(user_id, agent_type)
         if not update_success:
             print(f"Warning: Failed to update agent_type for user {user_id}")
             
-        create_evaluation_round_data(user_id=user_id, problem="", solution="", ai_feedback=None, round=1,time_remaining=EVALUATION_ROUND_1_TIME)
+        # Create evaluation round data
+        await create_evaluation_record_async(user_id, "", "", None, 1, EVALUATION_ROUND_1_TIME)
          # Prepare response data
         resp_data = {
             "user_id": user_id,
@@ -380,7 +373,9 @@ async def register_user(user_data: UserRegistration):
 async def login_user(login_data: UserLogin):
     """Login user with email and date of birth"""
     try:
-        user = get_user_by_email_and_dob(login_data.email, login_data.date_of_birth)
+        # Get user by email and DOB
+        from agents.database import get_user_by_email_and_dob_async
+        user = await get_user_by_email_and_dob_async(login_data.email, login_data.date_of_birth)
         
         if not user:
             raise HTTPException(
@@ -424,7 +419,9 @@ async def get_evaluation_by_round(
     Use ?round=1, ?round=2, ?round=3 or omit for all rounds.
     """
     user_id = current_user["user_id"]
-    return get_evaluation_data(user_id, round)
+    # Get evaluation data
+    from agents.database import get_evaluation_data_async
+    return await get_evaluation_data_async(user_id, round)
 
 @app.post("/evaluation/time")
 async def update_evaluation_time_remaining(
@@ -614,66 +611,90 @@ def get_interview_history_key(user_id: int) -> str:
     """Generate key for interview chat history"""
     return f"interview_history:{user_id}"
 
-def get_interview_session(user_id: int) -> Dict:
+async def get_interview_session(user_id: int) -> Dict:
     """Get interview session for user"""
     if redis_client:
         try:
             session_key = get_interview_session_key(user_id)
-            session_data = redis_client.get(session_key)
+            session_data = await redis_client.get(session_key)
             if session_data:
                 return json.loads(session_data)
+        except aioredis.ConnectionError as e:
+            print(f"Redis connection error getting interview session: {e}")
+        except aioredis.RedisError as e:
+            print(f"Redis error getting interview session: {e}")
+        except json.JSONDecodeError as e:
+            print(f"JSON decode error in interview session: {e}")
         except Exception as e:
-            print(f"Error getting interview session from Redis: {e}")
+            print(f"Unexpected error getting interview session from Redis: {e}")
     
     return interview_sessions.get(user_id, {})
 
-def save_interview_session(user_id: int, session_data: Dict):
+async def save_interview_session(user_id: int, session_data: Dict):
     """Save interview session for user"""
     if redis_client:
         try:
             session_key = get_interview_session_key(user_id)
-            redis_client.setex(session_key, 3600, json.dumps(session_data))  # 1 hour expiration
+            await redis_client.setex(session_key, 3600, json.dumps(session_data))  # 1 hour expiration
             return
+        except aioredis.ConnectionError as e:
+            print(f"Redis connection error saving interview session: {e}")
+        except aioredis.RedisError as e:
+            print(f"Redis error saving interview session: {e}")
+        except json.JSONEncodeError as e:
+            print(f"JSON encode error in interview session: {e}")
         except Exception as e:
-            print(f"Error saving interview session to Redis: {e}")
+            print(f"Unexpected error saving interview session to Redis: {e}")
     
     interview_sessions[user_id] = session_data
 
-def get_interview_chat_history(user_id: int) -> List[Dict]:
+async def get_interview_chat_history(user_id: int) -> List[Dict]:
     """Get interview chat history for user"""
     if redis_client:
         try:
             history_key = get_interview_history_key(user_id)
-            history_data = redis_client.get(history_key)
+            history_data = await redis_client.get(history_key)
             if history_data:
                 return json.loads(history_data)
+        except aioredis.ConnectionError as e:
+            print(f"Redis connection error getting interview history: {e}")
+        except aioredis.RedisError as e:
+            print(f"Redis error getting interview history: {e}")
+        except json.JSONDecodeError as e:
+            print(f"JSON decode error in interview history: {e}")
         except Exception as e:
-            print(f"Error getting interview history from Redis: {e}")
+            print(f"Unexpected error getting interview history from Redis: {e}")
     
     return interview_chat_history.get(user_id, [])
 
-def save_interview_chat_history(user_id: int, history: List[Dict]):
+async def save_interview_chat_history(user_id: int, history: List[Dict]):
     """Save interview chat history for user"""
     if redis_client:
         try:
             history_key = get_interview_history_key(user_id)
-            redis_client.setex(history_key, 86400, json.dumps(history))  # 24 hour expiration
+            await redis_client.setex(history_key, 86400, json.dumps(history))  # 24 hour expiration
             return
+        except aioredis.ConnectionError as e:
+            print(f"Redis connection error saving interview history: {e}")
+        except aioredis.RedisError as e:
+            print(f"Redis error saving interview history: {e}")
+        except json.JSONEncodeError as e:
+            print(f"JSON encode error in interview history: {e}")
         except Exception as e:
-            print(f"Error saving interview history to Redis: {e}")
+            print(f"Unexpected error saving interview history to Redis: {e}")
     
     interview_chat_history[user_id] = history
 
-def add_interview_message(user_id: int, role: str, content: str):
+async def add_interview_message(user_id: int, role: str, content: str):
     """Add a message to interview chat history"""
-    history = get_interview_chat_history(user_id)
+    history = await get_interview_chat_history(user_id)
     message = {
         "role": role,
         "content": content,
         "timestamp": datetime.utcnow().isoformat()
     }
     history.append(message)
-    save_interview_chat_history(user_id, history)
+    await save_interview_chat_history(user_id, history)
 
 @app.post("/interview/init")
 async def initialize_interview(request: InterviewInit, current_user: Dict = Depends(get_current_user)):
@@ -686,7 +707,8 @@ async def initialize_interview(request: InterviewInit, current_user: Dict = Depe
             raise HTTPException(status_code=403, detail="User ID mismatch")
         
         # Check if user exists
-        user_profile = get_user_profile(user_id)
+        from agents.database import get_user_profile_async
+        user_profile = await get_user_profile_async(user_id)
         if not user_profile:
             raise HTTPException(status_code=404, detail="User not found")
         
@@ -696,13 +718,13 @@ async def initialize_interview(request: InterviewInit, current_user: Dict = Depe
             "started_at": datetime.utcnow().isoformat(),
             "status": "active"
         }
-        save_interview_session(user_id, session_data)
+        await save_interview_session(user_id, session_data)
         
         # Create initial interview question
         initial_question = "Hello! I'm here to conduct an interview with you about your experience with our AI agents. Let's start with a simple question: How would you rate your overall experience with the AI agents you interacted with today? Please rate it on a scale of 1-10, where 1 is very poor and 10 is excellent."
         
         # Add initial question to chat history
-        add_interview_message(user_id, "assistant", initial_question)
+        await add_interview_message(user_id, "assistant", initial_question)
         
         return {
             "response": initial_question,
@@ -726,15 +748,15 @@ async def interview_chat(request: InterviewChat, current_user: Dict = Depends(ge
             raise HTTPException(status_code=403, detail="User ID mismatch")
         
         # Check if interview session exists
-        session = get_interview_session(user_id)
+        session = await get_interview_session(user_id)
         if not session or session.get("status") != "active":
             raise HTTPException(status_code=400, detail="No active interview session found. Please initialize the interview first.")
         
         # Add user message to history
-        add_interview_message(user_id, "user", user_message)
+        await add_interview_message(user_id, "user", user_message)
         
         # Get chat history for context
-        history = get_interview_chat_history(user_id)
+        history = await get_interview_chat_history(user_id)
         
         # Generate interview bot response based on context
         # This is a simple interview bot - you can enhance it with more sophisticated logic
@@ -751,10 +773,10 @@ async def interview_chat(request: InterviewChat, current_user: Dict = Depends(ge
             # Mark session as completed
             session["status"] = "completed"
             session["completed_at"] = datetime.utcnow().isoformat()
-            save_interview_session(user_id, session)
+            await save_interview_session(user_id, session)
         
         # Add assistant response to history
-        add_interview_message(user_id, "assistant", response)
+        await add_interview_message(user_id, "assistant", response)
         
         return {
             "response": response
@@ -776,7 +798,7 @@ async def get_interview_history(request: InterviewHistory, current_user: Dict = 
             raise HTTPException(status_code=403, detail="User ID mismatch")
         
         # Get interview chat history
-        chat_history = get_interview_chat_history(user_id)
+        chat_history = await get_interview_chat_history(user_id)
         
         if not chat_history:
             raise HTTPException(status_code=404, detail="No interview history found for this user")
