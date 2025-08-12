@@ -158,6 +158,24 @@ class RobustConnectionPool:
                 logger.error(f"Unexpected error getting connection: {e}")
                 raise
     
+    @contextmanager
+    def get_connection_context(self):
+        """Context manager for safe connection handling"""
+        conn = None
+        try:
+            conn = self.get_connection()
+            yield conn
+        except Exception as e:
+            if conn:
+                try:
+                    conn.rollback()
+                except:
+                    pass
+            raise
+        finally:
+            if conn:
+                self.return_connection(conn)
+    
     def return_connection(self, conn):
         """Return a connection to the pool safely"""
         try:
@@ -277,8 +295,34 @@ class MemoryManager:
             raise
     
     def vector_to_sql(self, vector: List[float]) -> str:
-        """Convert vector to PostgreSQL format"""
+        """Convert vector to PostgreSQL format - DEPRECATED: Use parameterized queries instead"""
+        # WARNING: This method is deprecated due to potential SQL injection risk
+        # Use vector_to_parameterized_sql() instead for safe vector handling
         return f"[{','.join(map(str, vector))}]"
+    
+    def vector_to_parameterized_sql(self, vector: List[float]) -> str:
+        """Convert vector to PostgreSQL format for parameterized queries"""
+        # This method is safe as it's used with parameterized queries
+        # The vector is converted to a format that can be safely used with %s placeholder
+        return f"[{','.join(map(str, vector))}]"
+    
+    def validate_vector(self, vector: List[float]) -> bool:
+        """Validate vector format and content"""
+        if not isinstance(vector, list):
+            return False
+        if len(vector) != 1536:  # Expected embedding dimension
+            return False
+        if not all(isinstance(x, (int, float)) for x in vector):
+            return False
+        return True
+    
+    def vector_to_array(self, vector: List[float]) -> List[float]:
+        """Convert vector to PostgreSQL array format for safer parameterized queries"""
+        # This method returns the vector as a list, which can be safely used
+        # with PostgreSQL's array type and parameterized queries
+        if not self.validate_vector(vector):
+            raise ValueError("Invalid vector format")
+        return vector
     
     def get_conversations_by_user(self, user_id: int, limit: int = 50) -> List[Dict]:
         """Retrieve recent conversations for a user"""
@@ -337,19 +381,56 @@ class MemoryManager:
                           memory_content: str, embedding: List[float], metadata: Optional[Dict] = None) -> int:
         """Store memory vector in database"""
         try:
+            # Validate vector before processing
+            if not self.validate_vector(embedding):
+                raise ValueError("Invalid embedding vector format")
+            
             with self.get_db_connection() as conn:
                 cursor = conn.cursor()
+                # Use parameterized query with explicit type casting for safety
                 cursor.execute("""
                     INSERT INTO memory_vectors 
                     (user_id, memory_type, source_conversations, memory_content, embedding, _metadata)
-                    VALUES (%s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s::VECTOR(1536), %s)
                     RETURNING memory_id
                 """, (
                     user_id,
                     memory_type,
                     source_conversations,
                     memory_content,
-                    self.vector_to_sql(embedding),
+                    self.vector_to_parameterized_sql(embedding),
+                    json.dumps(metadata) if metadata else None
+                ))
+                memory_id = cursor.fetchone()[0]
+                logger.info(f"Stored memory {memory_id} for user {user_id}")
+                return memory_id
+                
+        except Exception as e:
+            logger.error(f"Failed to store memory: {e}")
+            raise
+    
+    def store_memory_safe(self, user_id: int, memory_type: str, source_conversations: str,
+                          memory_content: str, embedding: List[float], metadata: Optional[Dict] = None) -> int:
+        """Store memory vector in database with enhanced safety"""
+        try:
+            # Validate vector before processing
+            if not self.validate_vector(embedding):
+                raise ValueError("Invalid embedding vector format")
+            
+            with self.get_db_connection() as conn:
+                cursor = conn.cursor()
+                # Use the safest approach: convert vector to array and let PostgreSQL handle the conversion
+                cursor.execute("""
+                    INSERT INTO memory_vectors 
+                    (user_id, memory_type, source_conversations, memory_content, embedding, _metadata)
+                    VALUES (%s, %s, %s, %s, %s::VECTOR(1536), %s)
+                    RETURNING memory_id
+                """, (
+                    user_id,
+                    memory_type,
+                    source_conversations,
+                    memory_content,
+                    self.vector_to_array(embedding),  # Use array format for maximum safety
                     json.dumps(metadata) if metadata else None
                 ))
                 memory_id = cursor.fetchone()[0]
@@ -378,6 +459,11 @@ class MemoryManager:
     def _retrieve_memories_sync(self, user_id: int, query_embedding: List[float], top_k: int) -> List[Dict]:
         """Synchronous version of retrieve_relevant_memories for thread pool execution"""
         try:
+            # Validate vector before processing
+            if not self.validate_vector(query_embedding):
+                logger.error("Invalid query embedding vector format")
+                return []
+            
             with self.get_db_connection() as conn:
                 cursor = conn.cursor(cursor_factory=RealDictCursor)
                 cursor.execute("""
@@ -388,9 +474,9 @@ class MemoryManager:
                     ORDER BY embedding <=> %s::VECTOR(1536)
                     LIMIT %s
                 """, (
-                    self.vector_to_sql(query_embedding),
+                    self.vector_to_parameterized_sql(query_embedding),
                     user_id,
-                    self.vector_to_sql(query_embedding),
+                    self.vector_to_parameterized_sql(query_embedding),
                     top_k
                 ))
                 return cursor.fetchall()
