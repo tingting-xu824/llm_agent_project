@@ -30,6 +30,7 @@ app = FastAPI()
 # CORS setup
 origins = [
     "http://localhost:3231",
+    "https://b2g-hackathon.netlify.app"
 ]
 
 app.add_middleware(
@@ -455,8 +456,7 @@ async def post_agent(input: ChatInput, current_user: Dict = Depends(get_current_
     # Select agent and model based on mode
     if input.mode == "eval":
         # Get user's assigned agent_type from database
-        from agents.database import get_user_profile
-        user_profile = get_user_profile(user_id)
+        user_profile = current_user
         agent_type = user_profile.get("agent_type", 1) if user_profile else 1
         
         # Assign agent based on stored agent_type
@@ -531,8 +531,8 @@ Please respond to the current message while considering the relevant context fro
 
     return [
         {
-            "message": agent_reply,
-            "type": "agent_response",
+            "content": agent_reply,
+            "message_type": "agent_response",
             "timestamp": (datetime.utcnow() + timedelta(seconds=1)).isoformat() + "Z",
             "memory_context_used": bool(memory_context)
         }

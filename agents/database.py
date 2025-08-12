@@ -70,7 +70,7 @@ class Conversation(Base):
     
     conversation_id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, nullable=False, index=True)
-    message_type = Column(String, nullable=False)  # "USER" or "ASSISTANT" (existing)
+    message_type = Column(String, nullable=False)  # "user_input" or "agent_response" (existing)
     content = Column(Text, nullable=False)  # The actual message content
     timestamp = Column(DateTime, default=func.now())
     character_count = Column(Integer)
@@ -117,6 +117,7 @@ class DatabaseManager:
                     "gender": user.gender,
                     "education_field": user.education_field,
                     "education_level": user.education_level,
+                    "agent_type": user.agent_type,
                     "disability_knowledge": user.disability_knowledge,
                     "genai_course_exp": user.genai_course_exp,
                     "token": user.token,
@@ -142,12 +143,13 @@ class DatabaseManager:
                     "last_name": user.last_name,
                     "email": user.email,
                     "dob": user.dob,
+                    "agent_type": user.agent_type,
                     "gender": user.gender,
                     "education_field": user.education_field,
                     "education_level": user.education_level,
                     "disability_knowledge": user.disability_knowledge,
                     "genai_course_exp": user.genai_course_exp,
-                    "token": user.token,
+                    "token": str(user.token),
                     "registration_time": user.registration_time
                 }
             return None
@@ -261,7 +263,7 @@ class DatabaseManager:
             next_sequence = 1 if not last_conversation else last_conversation.sequence_number + 1
             
             # Map role to message_type format
-            message_type = "USER" if role == "user" else "ASSISTANT"
+            message_type = "user_input" if role == "user" else "agent_response"
             
             conversation = Conversation(
                 user_id=user_id,
@@ -287,19 +289,14 @@ class DatabaseManager:
         try:
             conversations = self.db.query(Conversation).filter(
                 Conversation.user_id == user_id
-            ).order_by(Conversation.timestamp.desc()).limit(limit).all()
+            ).order_by(Conversation.timestamp.asc()).limit(limit).all()
             
             return [
                 {
                     "conversation_id": conv.conversation_id,
                     "content": conv.content,
                     "message_type": conv.message_type,
-                    "role": conv.role or ("user" if conv.message_type == "USER" else "assistant"),
-                    "mode": conv.mode or "chat",
                     "timestamp": conv.timestamp,
-                    "character_count": conv.character_count,
-                    "sequence_number": conv.sequence_number,
-                    "agent_type": conv.agent_type
                 }
                 for conv in conversations
             ]
