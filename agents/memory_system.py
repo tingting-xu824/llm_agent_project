@@ -175,8 +175,10 @@ class MemorySystem:
             metadata_type = metadata.get('type', 'general') if metadata else 'general'
             mode = metadata.get('mode', 'chat') if metadata else 'chat'
             
-            # Use mode as memory_type since it's either 'eval' or 'chat'
-            memory_type = mode
+            # Map mode to appropriate memory_type
+            # For eval mode, always use eval_summary
+            # For chat mode, default to conversation_chunk (will be overridden by memory_manager)
+            memory_type = "eval_summary" if mode == "eval" else "conversation_chunk"
             
             memory_id = await loop.run_in_executor(None, self.memory_manager.store_memory,
                 user_id,
@@ -208,7 +210,9 @@ class MemorySystem:
             # Map metadata type to valid memory_type values for fallback storage
             metadata_type = metadata.get('type', 'general') if metadata else 'general'
             mode = metadata.get('mode', 'chat') if metadata else 'chat'
-            memory_type = mode
+            # For eval mode, always use eval_summary
+            # For chat mode, default to conversation_chunk (will be overridden by memory_manager)
+            memory_type = "eval_summary" if mode == "eval" else "conversation_chunk"
             
             memory_entry = {
                 "memory_id": len(self.fallback_memories[user_id]) + 1,

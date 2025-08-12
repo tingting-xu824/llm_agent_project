@@ -227,7 +227,7 @@ class AIServiceManager:
         """
         try:
             # Create prompt based on memory type
-            if memory_type == "eval":
+            if memory_type == "eval_summary":
                 prompt = f"""Extract the key insights and decisions from this evaluation conversation. Focus on:
 - Main ideas discussed
 - Decisions made
@@ -238,12 +238,34 @@ Conversation:
 {conversation_text}
 
 Summary:"""
-            else:  # chat mode
-                prompt = f"""Extract the key technical details and implementation information from this conversation. Focus on:
-- Technical solutions discussed
-- Implementation details
-- Code snippets or approaches
-- Important decisions made
+            elif memory_type == "round_summary":
+                prompt = f"""Extract the key insights from this round of chat conversation. Focus on:
+- Main topics discussed
+- Key decisions made
+- Important information shared
+- Technical solutions mentioned
+
+Conversation:
+{conversation_text}
+
+Summary:"""
+            # key_insight removed - too arbitrary based on keywords
+            elif memory_type == "conversation_chunk":
+                prompt = f"""Extract the key information from this conversation chunk. Focus on:
+- Important points discussed
+- Key decisions made
+- Critical information shared
+- Session highlights
+
+Conversation:
+{conversation_text}
+
+Summary:"""
+            else:  # fallback
+                prompt = f"""Extract the key insights from this conversation. Focus on:
+- Important points discussed
+- Key decisions made
+- Critical information shared
 
 Conversation:
 {conversation_text}

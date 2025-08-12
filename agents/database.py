@@ -309,7 +309,7 @@ class DatabaseManager:
         try:
             memory_vector = MemoryVector(
                 user_id=user_id,
-                memory_type="conversation_memory",
+                memory_type="conversation_chunk",  # Use proper memory_type values
                 memory_content=content,
                 embedding=json.dumps(embedding),
                 _metadata=json.dumps(metadata) if metadata else None
@@ -366,7 +366,7 @@ class DatabaseManager:
             print(f"Error getting relevant memories: {e}")
             return []
 
-    def get_evaluation_data(self, user_id: int, round: int | None = None):
+    def get_evaluation_data(self, user_id: int, round: Optional[int] = None):
         try:
             if round is None:
                 eval_data = self.db.query(IdeaEvaluation).filter(IdeaEvaluation.user_id == user_id).all()
@@ -515,7 +515,7 @@ def get_relevant_memories(user_id: int, query_embedding: List[float], top_k: int
     with DatabaseManager() as db:
         return db.get_relevant_memories(user_id, query_embedding, top_k)
 
-def get_evaluation_data(user_id: int, round: int | None = None):
+def get_evaluation_data(user_id: int, round: Optional[int] = None):
     with DatabaseManager() as db:
         return db.get_evaluation_data(user_id, round)
     
@@ -580,7 +580,7 @@ async def create_evaluation_record_async(user_id: int, problem: str, solution: s
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, create_evaluation_record, user_id, problem, solution, ai_feedback, round, time_remaining)
 
-async def get_evaluation_data_async(user_id: int, round: int | None = None):
+async def get_evaluation_data_async(user_id: int, round: Optional[int] = None):
     """Get evaluation data using thread pool"""
     import asyncio
     loop = asyncio.get_event_loop()
@@ -671,3 +671,29 @@ async def execute_db_operations_batch(operations: List[tuple]) -> List[Any]:
         return results
     
     return await loop.run_in_executor(None, execute_operations_sync)
+
+def get_user_message_count(user_id: int, mode: str) -> int:
+    """Get total message count for a user in a specific mode"""
+    with DatabaseManager() as db:
+        try:
+            if mode == "eval":
+                # For eval mode, count evaluation records from idea_evaluation table
+                result = db.db.query(IdeaEvaluation).filter(
+                    IdeaEvaluation.user_id == user_id
+                ).count()
+            else:
+                # For chat mode, count conversation messages
+                result = db.db.query(Conversation).filter(
+                    Conversation.user_id == user_id,
+                    Conversation.mode == mode
+                ).count()
+            return result
+        except Exception as e:
+            print(f"Error getting message count for user {user_id}, mode {mode}: {e}")
+            return 0
+
+async def get_user_message_count_async(user_id: int, mode: str) -> int:
+    """Get total message count for a user in a specific mode using thread pool"""
+    import asyncio
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, get_user_message_count, user_id, mode)
