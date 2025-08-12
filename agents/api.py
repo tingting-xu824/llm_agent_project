@@ -8,18 +8,9 @@ import redis.asyncio as aioredis
 import json
 import os
 import uuid
-import asyncio
 from agents.agents_backend import agent1, agent2, chatbot_agent, run_agent
 from agents.database import (
-    get_user_by_token, 
-    get_user_by_email_and_dob, 
-    create_user, 
-    get_user_profile,
-    save_conversation_message,
-    get_user_conversations,
-    create_evaluation_round_data,
     update_evaluation_round_time,
-    get_evaluation_data,
     get_evaluation_record_by_round_async,
     update_evaluation_record_async,
     complete_evaluation_round_async,
@@ -600,7 +591,6 @@ Please provide a comprehensive but concise response (200-500 words)."""
             "message": "Evaluation submitted successfully",
             "ai_feedback": ai_feedback,
             "round": round,
-            "user_id": user_id
         }
         
     except HTTPException:
@@ -647,44 +637,6 @@ async def complete_evaluation_round(
                 detail=f"No evaluation record found for user {user_id} and round {round}"
             )
         
-        # Get word count requirements for this round
-        problem_min_words, problem_max_words, solution_min_words, solution_max_words = get_round_word_requirements(round)
-        
-        # Check if current round has been submitted (has problem and solution)
-        if not evaluation_record.problem.strip() or not evaluation_record.solution.strip():
-            raise HTTPException(
-                status_code=400,
-                detail=f"Round {round} must have problem and solution submitted before it can be completed"
-            )
-        
-        # Check word count requirements for completion
-        problem_word_count = count_words(evaluation_record.problem)
-        solution_word_count = count_words(evaluation_record.solution)
-        
-        if problem_word_count < problem_min_words:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Round {round} problem must be at least {problem_min_words} words. Current: {problem_word_count} words"
-            )
-        
-        if problem_word_count > problem_max_words:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Round {round} problem must not exceed {problem_max_words} words. Current: {problem_word_count} words"
-            )
-        
-        if solution_word_count < solution_min_words:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Round {round} solution must be at least {solution_min_words} words. Current: {solution_word_count} words"
-            )
-        
-        if solution_word_count > solution_max_words:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Round {round} solution must not exceed {solution_max_words} words. Current: {solution_word_count} words"
-            )
-        
         # Complete the round
         completion_success = await complete_evaluation_round_async(user_id, round)
         
@@ -703,7 +655,6 @@ async def complete_evaluation_round(
         return {
             "message": message,
             "round": round,
-            "user_id": user_id,
             "completed_at": datetime.utcnow().isoformat()
         }
         

@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, Column, Integer, String, Date, DateTime, Text, TIMESTAMP, BigInteger, ForeignKey, UniqueConstraint
+from sqlalchemy import create_engine, update, Column, Integer, String, Date, DateTime, Text, TIMESTAMP, BigInteger, ForeignKey, UniqueConstraint
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.sql import func
@@ -233,20 +233,24 @@ class DatabaseManager:
 
     def update_evaluation_round_time(self, user_id: int, round_number: int):
         try:
-            updated_rows = (
-                self.db.query(IdeaEvaluation)
-                .filter_by(user_id=user_id, round=round_number)
-                .update({
-                    IdeaEvaluation.time_remaining: func.greatest(
-                        IdeaEvaluation.time_remaining - 10, 0
-                    )
-                })
+            stmt = (
+                update(IdeaEvaluation)
+                .where(IdeaEvaluation.user_id == user_id, IdeaEvaluation.round == round_number)
+                .values(
+                    time_remaining=func.greatest(IdeaEvaluation.time_remaining - 10, 0)
+                )
+                .returning(IdeaEvaluation.time_remaining)  # <-- This is the key
             )
-            if updated_rows == 0:
+
+            # Execute and fetch the updated value in the same operation
+            result = self.db.execute(stmt).scalar()
+
+            if result is None:
                 self.db.rollback()
-                return False
+                return None  # No matching row found
+
             self.db.commit()
-            return True
+            return result
         except Exception as e:
             self.db.rollback()
             print(f"Error updating evaluation remaining time: {e}")
@@ -369,12 +373,11 @@ class DatabaseManager:
     def get_evaluation_data(self, user_id: int, round: int | None = None):
         try:
             if round is None:
-                eval_data = self.db.query(IdeaEvaluation).filter(IdeaEvaluation.user_id == user_id).all()
+                eval_data = self.db.query(IdeaEvaluation).filter(IdeaEvaluation.user_id == user_id).order_by(IdeaEvaluation.round.asc()).all()
                 return eval_data
             else:
                 # Convert int round to string for database query
-                round_str = str(round)
-                eval_data = self.db.query(IdeaEvaluation).filter(IdeaEvaluation.user_id == user_id, IdeaEvaluation.round == f"round-{round_str}").all() # "weired" round check because all possible enum values are
+                eval_data = self.db.query(IdeaEvaluation).filter(IdeaEvaluation.user_id == user_id, IdeaEvaluation.round == round).first() # "weired" round check because all possible enum values are
                 return eval_data
 
         except Exception as e:

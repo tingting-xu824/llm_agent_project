@@ -9,7 +9,6 @@ from typing import List, Dict, Tuple, Optional, Any, Callable
 import psycopg2
 import psycopg2.pool
 from psycopg2.extras import RealDictCursor
-import os
 from dotenv import load_dotenv
 
 load_dotenv()
