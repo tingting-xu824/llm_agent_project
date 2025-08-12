@@ -4,7 +4,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, EmailStr, validator
 from datetime import datetime, timedelta, date
 from typing import Dict, Optional, List
-import aioredis
+import redis.asyncio as aioredis
 import json
 import os
 import uuid
