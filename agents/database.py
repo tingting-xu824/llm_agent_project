@@ -442,6 +442,10 @@ async def execute_db_operations_batch(operations: List[tuple]) -> List[Any]:
                         result = db.save_memory_vector(*args)
                     elif func == 'update_user_agent_type':
                         result = db.update_user_agent_type(*args)
+                    elif func == 'create_evaluation_record':
+                        result = db.create_evaluation_record(*args)
+                    elif func == 'get_evaluation_data':
+                        result = db.get_evaluation_data(*args)
                     else:
                         result = None
                     results.append(result)
@@ -480,3 +484,35 @@ async def update_user_agent_type_async(user_id: int, agent_type: int) -> bool:
         ('update_user_agent_type', (user_id, agent_type))
     ])
     return results[0] if results else False
+
+async def create_evaluation_record_async(user_id: int, problem: str, solution: str, ai_feedback: str | None, round: int, time_remaining: int) -> Optional[dict]:
+    """Create evaluation record - optimized for batching"""
+    results = await execute_db_operations_batch([
+        ('create_evaluation_record', (user_id, problem, solution, ai_feedback, str(round), time_remaining))
+    ])
+    return results[0] if results else None
+
+async def get_evaluation_data_async(user_id: int, round: int | None = None):
+    """Get evaluation data - optimized for batching"""
+    results = await execute_db_operations_batch([
+        ('get_evaluation_data', (user_id, round))
+    ])
+    return results[0] if results else []
+
+async def create_user_async(user_data: Dict) -> tuple[Optional[Column[int]], Optional[str]]:
+    """Create user - optimized for batching"""
+    import asyncio
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, create_user, user_data)
+
+async def get_user_by_token_async(token: str) -> Optional[Dict]:
+    """Get user by token - optimized for batching"""
+    import asyncio
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, get_user_by_token, token)
+
+async def get_user_by_email_and_dob_async(email: str, date_of_birth: date) -> Optional[Dict]:
+    """Get user by email and DOB - optimized for batching"""
+    import asyncio
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, get_user_by_email_and_dob, email, date_of_birth)
