@@ -496,7 +496,7 @@ class MemoryManager:
         return False, []
     
     async def _check_chat_trigger(self, user_id: int, message_count: int = 0, 
-                                 inactivity_detected: bool = False) -> Tuple[bool, List[str]]:
+                                 inactivity_detected: bool = False, round_completed: bool = False) -> Tuple[bool, List[str]]:
         """Check chat phase memory triggers"""
         triggers = []
         
@@ -504,7 +504,9 @@ class MemoryManager:
         if message_count > 0 and message_count % self.chat_message_threshold == 0:
             triggers.append("message_count")
         
-
+        # Trigger 2: Round completion (for eval mode conversations)
+        if round_completed:
+            triggers.append("round_completed")
         
         # Trigger 3: Inactivity check (using Redis for tracking)
         if inactivity_detected:
