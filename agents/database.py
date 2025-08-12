@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, Column, Integer, String, Date, DateTime, Text, TIMESTAMP, BigInteger, ForeignKey
+from sqlalchemy import create_engine, Column, Integer, String, Date, DateTime, Text, TIMESTAMP, BigInteger, ForeignKey, UniqueConstraint
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.sql import func
@@ -44,17 +44,22 @@ class IdeaEvaluation(Base):
     __tablename__ = "idea_evaluation"
     
     id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(Integer, ForeignKey("user.user_id"), nullable=False, unique=True)
+    user_id = Column(Integer, ForeignKey("user.user_id"), nullable=False)
     problem = Column(Text, nullable=False)
     solution = Column(Text, nullable=False)
     ai_feedback = Column(Text)
-    round = Column(Integer, nullable=False, unique=True)  # Matching your 'idea_evaluation_rounds'
+    round = Column(Integer, nullable=False)  # Matching your 'idea_evaluation_rounds'
     created_at = Column(
         TIMESTAMP, 
         server_default=func.current_timestamp(),
         nullable=False
     )
     time_remaining = Column(BigInteger)
+    completed_at=Column(TIMESTAMP)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "round", name="uq_user_round"),
+    )
 
     def __repr__(self):
         return f"<IdeaEvaluation(id={self.id}, user_id={self.user_id}, round={self.round})>"
@@ -223,6 +228,27 @@ class DatabaseManager:
             self.db.rollback()
             print(f"Error creating evaluation record: {e}")
             return None
+
+    def update_evaluation_round_time(self, user_id: int, round_number: int):
+        try:
+            updated_rows = (
+                self.db.query(IdeaEvaluation)
+                .filter_by(user_id=user_id, round=round_number)
+                .update({
+                    IdeaEvaluation.time_remaining: func.greatest(
+                        IdeaEvaluation.time_remaining - 10, 0
+                    )
+                })
+            )
+            if updated_rows == 0:
+                self.db.rollback()
+                return False
+            self.db.commit()
+            return True
+        except Exception as e:
+            self.db.rollback()
+            print(f"Error updating evaluation remaining time: {e}")
+            return False
 
     def save_conversation_message(self, user_id: int, message: str, role: str, mode: str, agent_type: int) -> Optional[Column[int]]:
         """Save a conversation message to database"""
@@ -411,6 +437,10 @@ def get_evaluation_data(user_id: int, round: int | None = None):
 def create_evaluation_round_data(user_id: int, problem: str, solution: str, ai_feedback: str | None, round: int, time_remaining: int):
     with DatabaseManager() as db:
         return db.create_evaluation_record(user_id, problem, solution, ai_feedback, round, time_remaining)
+    
+def update_evaluation_round_time(user_id: int, round: int):
+    with DatabaseManager() as db:
+        return db.update_evaluation_round_time(user_id, round)
         
 # Optimized async functions that minimize run_in_executor overhead
 # These functions use a single thread pool call for multiple operations

@@ -17,6 +17,7 @@ from agents.database import (
     save_conversation_message,
     get_user_conversations,
     create_evaluation_round_data,
+    update_evaluation_round_time,
     get_evaluation_data
 )
 from agents.constants import EVALUATION_ROUND_1_TIME
@@ -423,6 +424,20 @@ async def get_evaluation_by_round(
     """
     user_id = current_user["user_id"]
     return get_evaluation_data(user_id, round)
+
+@app.post("/evaluation/time")
+async def update_evaluation_time_remaining(
+    current_user: Dict = Depends(get_current_user),
+    round: Optional[int] = Query(None, alias="round", ge=1, le=3, description="Agent round (1, 2, or 3)")
+):
+    """ Update evaluation time for a user for specific round mentioned """
+    if not round:
+        raise HTTPException(
+                status_code=400, 
+                detail="Invalid round parameter"
+            )
+    user_id = current_user["user_id"]
+    return update_evaluation_round_time(user_id, round)
 
 @app.post("/agent")
 async def post_agent(input: ChatInput, current_user: Dict = Depends(get_current_user)):
