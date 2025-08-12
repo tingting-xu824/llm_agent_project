@@ -244,10 +244,6 @@ class MemoryManager:
         # Memory trigger thresholds
         self.chat_message_threshold = 10
         self.inactivity_threshold = 1800  # 30 minutes in seconds
-        self.important_keywords = [
-            'important', 'decision', 'problem', 'solution', 'change', 'modify',
-            'key', 'critical', 'issue', 'update', 'final', 'conclusion'
-        ]
     
     @contextmanager
     def get_db_connection(self):
@@ -483,10 +479,7 @@ class MemoryManager:
             logger.error(f"Failed to retrieve memories (sync): {e}")
             return []
     
-    def detect_important_content(self, message: str) -> bool:
-        """Detect if message contains important content that should trigger memory creation"""
-        message_lower = message.lower()
-        return any(keyword in message_lower for keyword in self.important_keywords)
+
     
     async def check_memory_trigger(self, user_id: int, mode: str, **kwargs) -> Tuple[bool, List[str]]:
         """Check if memory should be created based on mode and conditions"""
@@ -503,7 +496,7 @@ class MemoryManager:
         return False, []
     
     async def _check_chat_trigger(self, user_id: int, message_count: int = 0, 
-                                 important_content: bool = False, session_closing: bool = False) -> Tuple[bool, List[str]]:
+                                 inactivity_detected: bool = False) -> Tuple[bool, List[str]]:
         """Check chat phase memory triggers"""
         triggers = []
         
@@ -511,18 +504,50 @@ class MemoryManager:
         if message_count > 0 and message_count % self.chat_message_threshold == 0:
             triggers.append("message_count")
         
-        # Trigger 2: Important content detected
-        if important_content:
-            triggers.append("important_content")
+
         
-        # Trigger 3: Session closing
-        if session_closing:
-            triggers.append("session_closing")
-        
-        # Trigger 4: Inactivity check (could be implemented with additional tracking)
-        # This would require storing last activity timestamps in database
+        # Trigger 3: Inactivity check (using Redis for tracking)
+        if inactivity_detected:
+            triggers.append("inactivity")
         
         return len(triggers) > 0, triggers
+    
+    def get_evaluation_data_by_user(self, user_id: int, limit: int = 10) -> List[Dict]:
+        """Retrieve recent evaluation data for a user from idea_evaluation table"""
+        try:
+            with self.get_db_connection() as conn:
+                cursor = conn.cursor(cursor_factory=RealDictCursor)
+                cursor.execute("""
+                    SELECT id, user_id, problem, solution, ai_feedback, round, created_at, completed_at
+                    FROM idea_evaluation 
+                    WHERE user_id = %s 
+                    ORDER BY created_at DESC 
+                    LIMIT %s
+                """, (user_id, limit))
+                return cursor.fetchall()
+        except Exception as e:
+            logger.error(f"Failed to get evaluation data for user {user_id}: {e}")
+            return []
+    
+    def format_evaluation_data_for_memory(self, evaluations: List[Dict]) -> str:
+        """Format evaluation data into text for memory extraction"""
+        formatted = []
+        for eval_data in reversed(evaluations):  # Reverse to chronological order
+            round_num = eval_data['round']
+            problem = eval_data['problem']
+            solution = eval_data['solution']
+            ai_feedback = eval_data['ai_feedback']
+            
+            formatted.append(f"Round {round_num}:")
+            if problem:
+                formatted.append(f"Problem: {problem}")
+            if solution:
+                formatted.append(f"Solution: {solution}")
+            if ai_feedback:
+                formatted.append(f"AI Feedback: {ai_feedback}")
+            formatted.append("")  # Empty line for separation
+        
+        return "\n".join(formatted)
     
     async def create_memory_from_conversations(self, user_id: int, memory_type: str, 
                                               conversation_ids: Optional[List[int]] = None,
@@ -568,15 +593,72 @@ class MemoryManager:
             logger.error(f"Failed to create memory for user {user_id}: {e}")
             return None
     
+    async def create_memory_from_evaluations(self, user_id: int, memory_type: str,
+                                            agent_type: Optional[int] = None) -> Optional[int]:
+        """Create memory from evaluation data (for eval mode)"""
+        try:
+            # Get evaluation data from idea_evaluation table
+            evaluations = self.get_evaluation_data_by_user(user_id, limit=10)
+            
+            if not evaluations:
+                logger.warning(f"No evaluation data found for user {user_id}")
+                return None
+            
+            # Format evaluation data for memory extraction
+            evaluation_text = self.format_evaluation_data_for_memory(evaluations)
+            
+            # Extract memory content using external function
+            memory_content = await self.extract_memory_content(evaluation_text, memory_type)
+            
+            # Generate embedding using external function
+            embedding = await self.get_embedding_with_cache(memory_content)
+            
+            # Prepare metadata
+            metadata = {
+                "agent_type": agent_type,
+                "evaluation_count": len(evaluations),
+                "created_by": "system",
+                "data_source": "idea_evaluation"
+            }
+            
+            # Store memory (now synchronous, run in thread pool)
+            loop = asyncio.get_event_loop()
+            memory_id = await loop.run_in_executor(None, self.store_memory,
+                user_id, memory_type, json.dumps([e['id'] for e in evaluations]),
+                memory_content, embedding, metadata
+            )
+            
+            return memory_id
+            
+        except Exception as e:
+            logger.error(f"Failed to create evaluation memory for user {user_id}: {e}")
+            return None
+    
     async def create_memory_async(self, user_id: int, mode: str, triggers: List[str], 
                                  agent_type: Optional[int] = None) -> None:
         """Asynchronously create memory without blocking API response"""
         try:
-            memory_type = "round_summary" if mode == "eval" else "conversation_chunk"
-            await self.create_memory_from_conversations(user_id, memory_type, agent_type=agent_type)
-            logger.info(f"Memory created for user {user_id}, triggers: {triggers}")
+            # For eval mode, always use eval_summary
+            # For chat mode, determine based on trigger type
+            if mode == "eval":
+                memory_type = "eval_summary"
+                await self.create_memory_from_evaluations(user_id, memory_type, agent_type=agent_type)
+            else:  # chat mode
+                # Determine memory_type based on trigger
+                if "message_count" in triggers:
+                    memory_type = "round_summary"
+                    await self.create_memory_from_conversations(user_id, memory_type, agent_type=agent_type)
+                elif "inactivity" in triggers:
+                    memory_type = "conversation_chunk"
+                    await self.create_memory_from_conversations(user_id, memory_type, agent_type=agent_type)
+                else:
+                    # No triggers met, don't create memory
+                    logger.info(f"No memory triggers met for user {user_id}, mode: {mode}, triggers: {triggers}")
+                    return
+                
+            logger.info(f"Memory created for user {user_id}, mode: {mode}, triggers: {triggers}")
         except Exception as e:
-            logger.error(f"Background memory creation failed for user {user_id}: {e}")
+            logger.error(f"Background memory creation failed for user {user_id}, mode: {mode}: {e}")
     
     def get_user_memory_count(self, user_id: int) -> int:
         """Get total number of memories stored for a user"""

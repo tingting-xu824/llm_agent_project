@@ -646,6 +646,28 @@ async def complete_evaluation_round(
                 detail="Failed to complete evaluation round"
             )
         
+        # Trigger memory creation for completed evaluation round
+        try:
+            # Get user's agent type for memory creation
+            user_profile = current_user
+            agent_type = user_profile.get("agent_type", 1) if user_profile else 1
+            
+            # Check memory triggers for eval mode (round completion)
+            should_create_memory, triggers = await memory_system.check_memory_trigger(
+                user_id, 
+                "eval", 
+                round_completed=True
+            )
+            
+            # Create memory asynchronously if triggers are met
+            if should_create_memory:
+                await memory_system.create_memory_async(user_id, "eval", triggers, agent_type)
+                print(f"Evaluation memory created for user {user_id}, round {round} with triggers: {triggers}")
+                
+        except Exception as e:
+            print(f"Error in evaluation memory creation: {e}")
+            # Continue execution even if memory creation fails
+        
         # Prepare response message
         if round == 4:
             message = f"Round {round} completed successfully. This was the final round."
@@ -725,32 +747,35 @@ Please respond to the current message while considering the relevant context fro
     # Store agent reply in database
     await save_conversation_message_async(user_id, agent_reply, "assistant", input.mode, agent_type)
     
-    # Store important parts in memory system for future RAG
-    # Store user message if it contains important information
-    if len(user_msg) > 20:  # Only store substantial messages
-        await memory_system.store_memory(
+    # Check memory triggers and create memory if needed
+    try:
+        # Get message count for this user in current mode
+        from agents.database import get_user_message_count_async
+        message_count = await get_user_message_count_async(user_id, input.mode)
+        
+        # Check user inactivity status
+        last_activity = await get_user_last_request_time_async(user_id)
+        inactivity_detected = False
+        if last_activity:
+            time_diff = (datetime.utcnow() - last_activity).total_seconds()
+            inactivity_detected = time_diff > memory_system.memory_manager.inactivity_threshold
+        
+        # Check memory triggers
+        should_create_memory, triggers = await memory_system.check_memory_trigger(
             user_id, 
-            user_msg, 
-            metadata={
-                "type": "user_message",
-                "mode": input.mode,
-                "agent_type": agent_type,
-                "timestamp": now.isoformat()
-            }
+            input.mode, 
+            message_count=message_count,
+            inactivity_detected=inactivity_detected
         )
-    
-    # Store agent reply if it contains substantial information
-    if len(agent_reply) > 30:  # Only store substantial responses
-        await memory_system.store_memory(
-            user_id, 
-            agent_reply, 
-            metadata={
-                "type": "agent_response",
-                "mode": input.mode,
-                "agent_type": agent_type,
-                "timestamp": now.isoformat()
-            }
-        )
+        
+        # Create memory asynchronously if triggers are met
+        if should_create_memory:
+            await memory_system.create_memory_async(user_id, input.mode, triggers, agent_type)
+            print(f"Memory created for user {user_id} with triggers: {triggers}")
+            
+    except Exception as e:
+        print(f"Error in memory trigger check: {e}")
+        # Continue execution even if memory creation fails
     
     # Update immediate history for Redis
     history.append(("Assistant", agent_reply))

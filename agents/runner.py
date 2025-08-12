@@ -41,6 +41,7 @@ class AIServiceManager:
         # Model configuration for different phases
         self.eval_model = "gpt-4o"  # Evaluation phase model
         self.chat_model = "gpt-4o"  # Chat phase model
+        self.memory_model = "gpt-4o-mini"  # Memory extraction model (can be optimized for cost/speed)
         
         print(f"AI Service Manager initialized with {len(self.api_keys)} API keys")
         print(f"Chat priority keys: {[i+1 for i in self.chat_priority_indices]}")
@@ -227,7 +228,7 @@ class AIServiceManager:
         """
         try:
             # Create prompt based on memory type
-            if memory_type == "eval":
+            if memory_type == "eval_summary":
                 prompt = f"""Extract the key insights and decisions from this evaluation conversation. Focus on:
 - Main ideas discussed
 - Decisions made
@@ -238,12 +239,34 @@ Conversation:
 {conversation_text}
 
 Summary:"""
-            else:  # chat mode
-                prompt = f"""Extract the key technical details and implementation information from this conversation. Focus on:
-- Technical solutions discussed
-- Implementation details
-- Code snippets or approaches
-- Important decisions made
+            elif memory_type == "round_summary":
+                prompt = f"""Extract the key insights from this round of chat conversation. Focus on:
+- Main topics discussed
+- Key decisions made
+- Important information shared
+- Technical solutions mentioned
+
+Conversation:
+{conversation_text}
+
+Summary:"""
+            # key_insight removed - too arbitrary based on keywords
+            elif memory_type == "conversation_chunk":
+                prompt = f"""Extract the key information from this conversation chunk. Focus on:
+- Important points discussed
+- Key decisions made
+- Critical information shared
+- Session highlights
+
+Conversation:
+{conversation_text}
+
+Summary:"""
+            else:  # fallback
+                prompt = f"""Extract the key insights from this conversation. Focus on:
+- Important points discussed
+- Key decisions made
+- Critical information shared
 
 Conversation:
 {conversation_text}
@@ -267,7 +290,7 @@ Summary:"""
             # Execute with fallback
             return await self._call_with_fallback(
                 priority_clients, fallback_clients, "chat_completion",
-                model=self.chat_model,
+                model=self.memory_model,
                 messages=[
                     {"role": "system", "content": "You are a helpful assistant that extracts key information from conversations."},
                     {"role": "user", "content": prompt}
@@ -299,7 +322,7 @@ Summary:"""
     
     def get_available_models(self) -> List[str]:
         """Get list of available models"""
-        return [self.eval_model, self.chat_model]
+        return [self.eval_model, self.chat_model, self.memory_model]
     
     def get_api_key_count(self) -> int:
         """Get number of available API keys"""
