@@ -55,8 +55,14 @@ async def init_redis_client():
     """Initialize async Redis client"""
     global redis_client
     try:
+        # Build Redis URL properly
+        if REDIS_PASSWORD:
+            redis_url = f"redis://:{REDIS_PASSWORD}@{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}"
+        else:
+            redis_url = f"redis://{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}"
+        
         redis_client = await aioredis.from_url(
-            f"redis://{REDIS_PASSWORD + '@' if REDIS_PASSWORD else ''}{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}",
+            redis_url,
             encoding="utf-8",
             decode_responses=True
         )
@@ -72,6 +78,14 @@ async def init_redis_client():
 @app.on_event("startup")
 async def startup_event():
     await init_redis_client()
+
+# Cleanup Redis connection on shutdown
+@app.on_event("shutdown")
+async def shutdown_event():
+    global redis_client
+    if redis_client:
+        await redis_client.close()
+        print("Redis connection closed")
 
 # Fallback in-memory storage for when Redis is not available
 in_memory_conversations = {}
@@ -174,63 +188,7 @@ def get_user_last_request_key(user_id: int) -> str:
     """Generate Redis key for user rate limiting"""
     return f"user_last_request:{user_id}"
 
-def get_user_conversation(user_id: int) -> list[tuple[str, str]]:
-    """Get user conversation history from Redis, fallback to memory"""
-    if redis_client:
-        try:
-            conversation_key = get_user_conversation_key(user_id)
-            conversation_data = redis_client.get(conversation_key)
-            if conversation_data:
-                return json.loads(conversation_data)
-            return []
-        except Exception as e:
-            print(f"Error getting user conversation from Redis: {e}")
-    
-    # Fallback to in-memory storage
-    return in_memory_conversations.get(user_id, [])
-
-def save_user_conversation(user_id: int, conversation: list[tuple[str, str]]):
-    """Save user conversation history to Redis with 24-hour expiration, fallback to memory"""
-    if redis_client:
-        try:
-            conversation_key = get_user_conversation_key(user_id)
-            # Set expiration to 24 hours for automatic cleanup
-            redis_client.setex(conversation_key, 86400, json.dumps(conversation))
-            return
-        except Exception as e:
-            print(f"Error saving user conversation to Redis: {e}")
-    
-    # Fallback to in-memory storage
-    in_memory_conversations[user_id] = conversation
-
-def get_user_last_request_time(user_id: int) -> datetime | None :
-    """Get user's last request time from Redis for rate limiting, fallback to memory"""
-    if redis_client:
-        try:
-            request_key = get_user_last_request_key(user_id)
-            last_time_str = redis_client.get(request_key)
-            if last_time_str:
-                return datetime.fromisoformat(last_time_str)
-            return None
-        except Exception as e:
-            print(f"Error getting user last request time from Redis: {e}")
-    
-    # Fallback to in-memory storage
-    return in_memory_last_requests.get(user_id)
-
-def save_user_last_request_time(user_id: int, request_time: datetime):
-    """Save user's last request time to Redis with 1-hour expiration, fallback to memory"""
-    if redis_client:
-        try:
-            request_key = get_user_last_request_key(user_id)
-            # Set expiration to 1 hour for rate limiting
-            redis_client.setex(request_key, 3600, request_time.isoformat())
-            return
-        except Exception as e:
-            print(f"Error saving user last request time to Redis: {e}")
-    
-    # Fallback to in-memory storage
-    in_memory_last_requests[user_id] = request_time
+# Note: Synchronous Redis functions removed - use async versions instead
 
 # Async versions of the above functions for use in async endpoints
 async def get_user_conversation_async(user_id: int) -> list[tuple[str, str]]:
@@ -242,8 +200,14 @@ async def get_user_conversation_async(user_id: int) -> list[tuple[str, str]]:
             if conversation_data:
                 return json.loads(conversation_data)
             return []
+        except aioredis.ConnectionError as e:
+            print(f"Redis connection error getting user conversation: {e}")
+        except aioredis.RedisError as e:
+            print(f"Redis error getting user conversation: {e}")
+        except json.JSONDecodeError as e:
+            print(f"JSON decode error in user conversation: {e}")
         except Exception as e:
-            print(f"Error getting user conversation from Redis: {e}")
+            print(f"Unexpected error getting user conversation from Redis: {e}")
     
     # Fallback to in-memory storage
     return in_memory_conversations.get(user_id, [])
@@ -256,8 +220,14 @@ async def save_user_conversation_async(user_id: int, conversation: list[tuple[st
             # Set expiration to 24 hours for automatic cleanup
             await redis_client.setex(conversation_key, 86400, json.dumps(conversation))
             return
+        except aioredis.ConnectionError as e:
+            print(f"Redis connection error saving user conversation: {e}")
+        except aioredis.RedisError as e:
+            print(f"Redis error saving user conversation: {e}")
+        except json.JSONEncodeError as e:
+            print(f"JSON encode error in user conversation: {e}")
         except Exception as e:
-            print(f"Error saving user conversation to Redis: {e}")
+            print(f"Unexpected error saving user conversation to Redis: {e}")
     
     # Fallback to in-memory storage
     in_memory_conversations[user_id] = conversation
@@ -271,8 +241,14 @@ async def get_user_last_request_time_async(user_id: int) -> datetime | None:
             if last_time_str:
                 return datetime.fromisoformat(last_time_str)
             return None
+        except aioredis.ConnectionError as e:
+            print(f"Redis connection error getting user last request time: {e}")
+        except aioredis.RedisError as e:
+            print(f"Redis error getting user last request time: {e}")
+        except ValueError as e:
+            print(f"Invalid datetime format in user last request time: {e}")
         except Exception as e:
-            print(f"Error getting user last request time from Redis: {e}")
+            print(f"Unexpected error getting user last request time from Redis: {e}")
     
     # Fallback to in-memory storage
     return in_memory_last_requests.get(user_id)
@@ -285,8 +261,12 @@ async def save_user_last_request_time_async(user_id: int, request_time: datetime
             # Set expiration to 1 hour for rate limiting
             await redis_client.setex(request_key, 3600, request_time.isoformat())
             return
+        except aioredis.ConnectionError as e:
+            print(f"Redis connection error saving user last request time: {e}")
+        except aioredis.RedisError as e:
+            print(f"Redis error saving user last request time: {e}")
         except Exception as e:
-            print(f"Error saving user last request time to Redis: {e}")
+            print(f"Unexpected error saving user last request time to Redis: {e}")
     
     # Fallback to in-memory storage
     in_memory_last_requests[user_id] = request_time
@@ -639,8 +619,14 @@ async def get_interview_session(user_id: int) -> Dict:
             session_data = await redis_client.get(session_key)
             if session_data:
                 return json.loads(session_data)
+        except aioredis.ConnectionError as e:
+            print(f"Redis connection error getting interview session: {e}")
+        except aioredis.RedisError as e:
+            print(f"Redis error getting interview session: {e}")
+        except json.JSONDecodeError as e:
+            print(f"JSON decode error in interview session: {e}")
         except Exception as e:
-            print(f"Error getting interview session from Redis: {e}")
+            print(f"Unexpected error getting interview session from Redis: {e}")
     
     return interview_sessions.get(user_id, {})
 
@@ -651,8 +637,14 @@ async def save_interview_session(user_id: int, session_data: Dict):
             session_key = get_interview_session_key(user_id)
             await redis_client.setex(session_key, 3600, json.dumps(session_data))  # 1 hour expiration
             return
+        except aioredis.ConnectionError as e:
+            print(f"Redis connection error saving interview session: {e}")
+        except aioredis.RedisError as e:
+            print(f"Redis error saving interview session: {e}")
+        except json.JSONEncodeError as e:
+            print(f"JSON encode error in interview session: {e}")
         except Exception as e:
-            print(f"Error saving interview session to Redis: {e}")
+            print(f"Unexpected error saving interview session to Redis: {e}")
     
     interview_sessions[user_id] = session_data
 
@@ -664,8 +656,14 @@ async def get_interview_chat_history(user_id: int) -> List[Dict]:
             history_data = await redis_client.get(history_key)
             if history_data:
                 return json.loads(history_data)
+        except aioredis.ConnectionError as e:
+            print(f"Redis connection error getting interview history: {e}")
+        except aioredis.RedisError as e:
+            print(f"Redis error getting interview history: {e}")
+        except json.JSONDecodeError as e:
+            print(f"JSON decode error in interview history: {e}")
         except Exception as e:
-            print(f"Error getting interview history from Redis: {e}")
+            print(f"Unexpected error getting interview history from Redis: {e}")
     
     return interview_chat_history.get(user_id, [])
 
@@ -676,8 +674,14 @@ async def save_interview_chat_history(user_id: int, history: List[Dict]):
             history_key = get_interview_history_key(user_id)
             await redis_client.setex(history_key, 86400, json.dumps(history))  # 24 hour expiration
             return
+        except aioredis.ConnectionError as e:
+            print(f"Redis connection error saving interview history: {e}")
+        except aioredis.RedisError as e:
+            print(f"Redis error saving interview history: {e}")
+        except json.JSONEncodeError as e:
+            print(f"JSON encode error in interview history: {e}")
         except Exception as e:
-            print(f"Error saving interview history to Redis: {e}")
+            print(f"Unexpected error saving interview history to Redis: {e}")
     
     interview_chat_history[user_id] = history
 

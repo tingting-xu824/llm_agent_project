@@ -442,13 +442,68 @@ def update_evaluation_round_time(user_id: int, round: int):
     with DatabaseManager() as db:
         return db.update_evaluation_round_time(user_id, round)
         
-# Optimized async functions that minimize run_in_executor overhead
-# These functions use a single thread pool call for multiple operations
+# Async database functions using thread pool for synchronous operations
+# Note: These are not truly async I/O but provide async interface for compatibility
 
+async def save_conversation_message_async(user_id: int, message: str, role: str, mode: str, agent_type: int) -> Optional[Column[int]]:
+    """Save conversation message using thread pool"""
+    import asyncio
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, save_conversation_message, user_id, message, role, mode, agent_type)
+
+async def get_user_conversations_async(user_id: int, limit: int = 50) -> List[Dict]:
+    """Get user conversations using thread pool"""
+    import asyncio
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, get_user_conversations, user_id, limit)
+
+async def get_user_profile_async(user_id: int) -> Optional[Dict]:
+    """Get user profile using thread pool"""
+    import asyncio
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, get_user_profile, user_id)
+
+async def update_user_agent_type_async(user_id: int, agent_type: int) -> bool:
+    """Update user's agent type using thread pool"""
+    import asyncio
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, update_user_agent_type, user_id, agent_type)
+
+async def create_evaluation_record_async(user_id: int, problem: str, solution: str, ai_feedback: str | None, round: int, time_remaining: int) -> Optional[dict]:
+    """Create evaluation record using thread pool"""
+    import asyncio
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, create_evaluation_record, user_id, problem, solution, ai_feedback, round, time_remaining)
+
+async def get_evaluation_data_async(user_id: int, round: int | None = None):
+    """Get evaluation data using thread pool"""
+    import asyncio
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, get_evaluation_data, user_id, round)
+
+async def create_user_async(user_data: Dict) -> tuple[Optional[Column[int]], Optional[str]]:
+    """Create user using thread pool"""
+    import asyncio
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, create_user, user_data)
+
+async def get_user_by_token_async(token: str) -> Optional[Dict]:
+    """Get user by token using thread pool"""
+    import asyncio
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, get_user_by_token, token)
+
+async def get_user_by_email_and_dob_async(email: str, date_of_birth: date) -> Optional[Dict]:
+    """Get user by email and DOB using thread pool"""
+    import asyncio
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, get_user_by_email_and_dob, email, date_of_birth)
+
+# Batch operations for true optimization (when multiple operations need to be executed together)
 async def execute_db_operations_batch(operations: List[tuple]) -> List[Any]:
     """
     Execute multiple database operations in a single thread pool call
-    to minimize run_in_executor overhead
+    This is only used when multiple operations need to be executed together
     
     Args:
         operations: List of (function, *args) tuples
@@ -487,64 +542,3 @@ async def execute_db_operations_batch(operations: List[tuple]) -> List[Any]:
         return results
     
     return await loop.run_in_executor(None, execute_operations_sync)
-
-# Individual async functions that can be batched
-async def save_conversation_message_async(user_id: int, message: str, role: str, mode: str, agent_type: int) -> Optional[Column[int]]:
-    """Save conversation message - optimized for batching"""
-    results = await execute_db_operations_batch([
-        ('save_conversation_message', (user_id, message, role, mode, agent_type))
-    ])
-    return results[0] if results else None
-
-async def get_user_conversations_async(user_id: int, limit: int = 50) -> List[Dict]:
-    """Get user conversations - optimized for batching"""
-    results = await execute_db_operations_batch([
-        ('get_user_conversations', (user_id, limit))
-    ])
-    return results[0] if results else []
-
-async def get_user_profile_async(user_id: int) -> Optional[Dict]:
-    """Get user profile - optimized for batching"""
-    results = await execute_db_operations_batch([
-        ('get_user_profile', (user_id,))
-    ])
-    return results[0] if results else None
-
-async def update_user_agent_type_async(user_id: int, agent_type: int) -> bool:
-    """Update user's agent type - optimized for batching"""
-    results = await execute_db_operations_batch([
-        ('update_user_agent_type', (user_id, agent_type))
-    ])
-    return results[0] if results else False
-
-async def create_evaluation_record_async(user_id: int, problem: str, solution: str, ai_feedback: str | None, round: int, time_remaining: int) -> Optional[dict]:
-    """Create evaluation record - optimized for batching"""
-    results = await execute_db_operations_batch([
-        ('create_evaluation_record', (user_id, problem, solution, ai_feedback, str(round), time_remaining))
-    ])
-    return results[0] if results else None
-
-async def get_evaluation_data_async(user_id: int, round: int | None = None):
-    """Get evaluation data - optimized for batching"""
-    results = await execute_db_operations_batch([
-        ('get_evaluation_data', (user_id, round))
-    ])
-    return results[0] if results else []
-
-async def create_user_async(user_data: Dict) -> tuple[Optional[Column[int]], Optional[str]]:
-    """Create user - optimized for batching"""
-    import asyncio
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, create_user, user_data)
-
-async def get_user_by_token_async(token: str) -> Optional[Dict]:
-    """Get user by token - optimized for batching"""
-    import asyncio
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, get_user_by_token, token)
-
-async def get_user_by_email_and_dob_async(email: str, date_of_birth: date) -> Optional[Dict]:
-    """Get user by email and DOB - optimized for batching"""
-    import asyncio
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, get_user_by_email_and_dob, email, date_of_birth)
