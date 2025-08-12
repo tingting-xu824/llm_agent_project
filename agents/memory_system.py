@@ -171,9 +171,16 @@ class MemorySystem:
             embedding = await self._generate_embedding(content)
             # Run synchronous store_memory in thread pool
             loop = asyncio.get_event_loop()
+            # Map metadata type to valid memory_type values
+            metadata_type = metadata.get('type', 'general') if metadata else 'general'
+            mode = metadata.get('mode', 'chat') if metadata else 'chat'
+            
+            # Use mode as memory_type since it's either 'eval' or 'chat'
+            memory_type = mode
+            
             memory_id = await loop.run_in_executor(None, self.memory_manager.store_memory,
                 user_id,
-                metadata.get('type', 'general') if metadata else 'general',
+                memory_type,
                 "",
                 content,
                 embedding,
@@ -198,10 +205,15 @@ class MemorySystem:
             if user_id not in self.fallback_memories:
                 self.fallback_memories[user_id] = []
             
+            # Map metadata type to valid memory_type values for fallback storage
+            metadata_type = metadata.get('type', 'general') if metadata else 'general'
+            mode = metadata.get('mode', 'chat') if metadata else 'chat'
+            memory_type = mode
+            
             memory_entry = {
                 "memory_id": len(self.fallback_memories[user_id]) + 1,
                 "memory_content": content,
-                "memory_type": metadata.get('type', 'general') if metadata else 'general',
+                "memory_type": memory_type,
                 "created_at": datetime.now().isoformat(),
                 "metadata": metadata or {},
                 "fallback": True
