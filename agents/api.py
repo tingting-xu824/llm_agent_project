@@ -839,7 +839,9 @@ async def post_agent(input: ChatInput, current_user: Dict = Depends(get_current_
     await save_conversation_message_async(user_id, user_msg, "user", input.mode, agent_type)
     
     # Get relevant memories for RAG
-    memory_context = await memory_system.create_memory_context(user_id, user_msg, top_k=3)
+    memory_context = await memory_system.create_memory_context(
+        user_id, user_msg, top_k=3, time_weight_factor=0.1
+    )
     
     # Prepare enhanced prompt with memory context
     enhanced_prompt = user_msg
