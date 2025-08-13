@@ -8,6 +8,7 @@ import redis.asyncio as aioredis
 import json
 import os
 import uuid
+import asyncio
 from agents.agents_backend import agent1, agent2, chatbot_agent, run_agent, run_interview_agent
 from agents.database import (
     update_evaluation_round_time,
@@ -35,6 +36,49 @@ from agents.constants import (
 from .memory_system import memory_system
 from fastapi import Query
 from sqlalchemy import Column
+
+# Interview-specific error handling functions
+async def run_interview_agent_with_retry(user_id: int, user_message: str, history: list[tuple[str, str]], model: str, max_retries: int = 3) -> str:
+    """Execute interview agent with retry mechanism"""
+    for attempt in range(max_retries):
+        try:
+            response = await run_interview_agent(user_id, user_message, history, model)
+            return response
+        except Exception as e:
+            print(f"Interview agent call attempt {attempt + 1} failed: {e}")
+            if attempt == max_retries - 1:  # Last attempt
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"AI service temporarily unavailable after {max_retries} attempts. Please try again later."
+                )
+            else:
+                # Wait before retry with exponential backoff
+                await asyncio.sleep(2 ** attempt)
+                continue
+
+def parse_ai_response(ai_response: str) -> tuple[str, bool]:
+    """Parse AI response with improved error handling"""
+    try:
+        response_data = json.loads(ai_response)
+        message = response_data.get("message", "")
+        is_end = response_data.get("is_end", False)
+        
+        # Validate required fields
+        if not message:
+            raise ValueError("AI response missing 'message' field")
+            
+        return message, is_end
+        
+    except json.JSONDecodeError as e:
+        # JSON parsing failed, log error and return fallback
+        print(f"JSON decode error in AI response: {e}")
+        print(f"Raw response: {ai_response}")
+        return "I apologize, but I'm having trouble processing your response. Could you please rephrase your answer?", False
+        
+    except Exception as e:
+        # Other parsing errors
+        print(f"Error parsing AI response: {e}")
+        return "I apologize, but I encountered an error. Please try again.", False
 
 ENV = os.getenv("ENV", "dev")
 
@@ -1052,18 +1096,11 @@ async def initialize_interview(request: InterviewInit, current_user: Dict = Depe
         }
         await save_interview_session(user_id, session_data)
         
-        # Generate initial interview question using interview agent
-        initial_response = await run_interview_agent(user_id, "", [], "gpt-4o-mini")
+        # Generate initial interview question using interview agent with retry
+        initial_response = await run_interview_agent_with_retry(user_id, "", [], "gpt-4o-mini")
         
-        # Parse JSON response
-        try:
-            response_data = json.loads(initial_response)
-            initial_question = response_data.get("message", "")
-            is_end = response_data.get("is_end", False)
-        except json.JSONDecodeError:
-            # Fallback if JSON parsing fails
-            initial_question = initial_response
-            is_end = False
+        # Parse JSON response with improved error handling
+        initial_question, is_end = parse_ai_response(initial_response)
         
         # Add initial question to database
         await add_interview_message_async(user_id, "Questions", initial_question, is_end)
@@ -1122,18 +1159,11 @@ async def interview_chat(request: InterviewChat, current_user: Dict = Depends(ge
             elif msg["content_type"] == "Answers":
                 history.append(("user", msg["content"]))
         
-        # Generate interview response using interview agent
-        ai_response = await run_interview_agent(user_id, user_message, history, "gpt-4o-mini")
+        # Generate interview response using interview agent with retry
+        ai_response = await run_interview_agent_with_retry(user_id, user_message, history, "gpt-4o-mini")
         
-        # Parse JSON response
-        try:
-            response_data = json.loads(ai_response)
-            response = response_data.get("message", "")
-            is_end = response_data.get("is_end", False)
-        except json.JSONDecodeError:
-            # Fallback if JSON parsing fails
-            response = ai_response
-            is_end = False
+        # Parse JSON response with improved error handling
+        response, is_end = parse_ai_response(ai_response)
         
         # Add AI response to database
         await add_interview_message_async(user_id, "Questions", response, is_end)
