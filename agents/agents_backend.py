@@ -95,3 +95,33 @@ async def run_agent_legacy(agent, user_message: str, history: list[tuple[str, st
     # Execute agent with the constructed prompt
     assistant_reply = await Runner.run(agent, prompt, model)
     return assistant_reply.strip()
+
+# Interview agent for conducting structured interviews
+interview_agent = Agent(
+    name="Interview Agent",
+    instructions=load_prompt("interview.txt")
+)
+
+# Specialized interview agent execution function (no memory system)
+async def run_interview_agent(user_id: int, user_message: str, history: list[tuple[str, str]], model: str) -> str:
+    """
+    Execute interview agent with conversation history (no memory integration)
+    
+    Args:
+        user_id: User ID (for compatibility, not used in this function)
+        user_message: Current user input message
+        history: List of (role, message) tuples representing conversation history
+        model: OpenAI model to use (e.g., "gpt-4o-mini", "o3")
+    
+    Returns:
+        str: Agent's response message in JSON format
+    """
+    # Build conversation prompt from history
+    prompt = ""
+    for role, msg in history:
+        prompt += f"{role}: {msg}\n"
+    prompt += f"User: {user_message}\nAssistant:"
+
+    # Execute interview agent with the constructed prompt
+    assistant_reply = await Runner.run(interview_agent, prompt, model)
+    return assistant_reply.strip()
