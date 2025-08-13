@@ -895,13 +895,19 @@ Please respond to the current message while considering the relevant context fro
                     round_completed = latest_record.completed_at is not None
         
         # Check memory triggers
-        should_create_memory, triggers = await memory_system.check_memory_trigger(
-            user_id, 
-            input.mode, 
-            message_count=message_count,
-            inactivity_detected=inactivity_detected,
-            round_completed=round_completed
-        )
+        if input.mode == "eval":
+            should_create_memory, triggers = await memory_system.check_memory_trigger(
+                user_id, 
+                input.mode, 
+                round_completed=round_completed
+            )
+        else:  # chat mode
+            should_create_memory, triggers = await memory_system.check_memory_trigger(
+                user_id, 
+                input.mode, 
+                message_count=message_count,
+                inactivity_detected=inactivity_detected
+            )
         
         # Create memory asynchronously if triggers are met
         if should_create_memory:
