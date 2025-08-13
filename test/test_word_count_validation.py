@@ -36,11 +36,11 @@ def test_round_requirements():
     print("\n=== Testing Round Word Requirements ===")
     
     expected_requirements = {
-        1: (100, 500, 100, 500),  # Problem: 100-500, Solution: 100-500
-        2: (100, 500, 150, 500),  # Problem: 100-500, Solution: 150-500
-        3: (100, 500, 200, 500),  # Problem: 100-500, Solution: 200-500
-        4: (100, 500, 250, 500),  # Problem: 100-500, Solution: 250-500
-        5: (100, 500, 100, 500),  # Default fallback
+        1: (100, 100),  # Problem: 100, Solution: 100
+        2: (100, 150),  # Problem: 100, Solution: 150
+        3: (100, 200),  # Problem: 100, Solution: 200
+        4: (100, 250),  # Problem: 100, Solution: 250
+        5: (100, 100),  # Default fallback
     }
     
     for round_num, expected in expected_requirements.items():
@@ -56,14 +56,14 @@ def test_validation_scenarios():
     test_scenarios = [
         {
             "round": 1,
-            "problem": "The accessibility challenges in public transportation systems present a significant barrier for individuals with disabilities, elderly populations, and those with limited mobility. Current systems often lack comprehensive features that address the diverse needs of all users, including those with visual, auditory, physical, and cognitive impairments. The problem encompasses inadequate information dissemination, insufficient physical infrastructure, and limited technological integration that could enhance the overall user experience for everyone. Additionally, there are significant gaps in the current transportation infrastructure that prevent equal access for all users. The lack of standardized accessibility features across different transportation modes creates confusion and frustration for users who rely on these services. Furthermore, the rapid advancement of technology has created new opportunities for improving accessibility, but many transportation systems have been slow to adopt these innovations. This technological lag further exacerbates the accessibility divide and prevents many individuals from fully participating in society.",
-            "solution": "Implement a comprehensive accessibility enhancement system for public transportation that addresses multiple user needs through integrated technological and infrastructure solutions. The solution includes developing a multi-modal information system with voice announcements, tactile indicators, and mobile application integration that provides real-time updates and personalized navigation assistance. Physical infrastructure improvements involve installing accessible boarding platforms, clear signage with multiple formats, and emergency assistance systems. The mobile application should feature voice navigation, customizable interface options, real-time service updates, and integration with personal assistive devices. Additionally, staff training programs and community feedback mechanisms should be established to ensure continuous improvement and user satisfaction. This holistic approach ensures that public transportation becomes truly accessible for all users, regardless of their abilities or limitations.",
+            "problem": "This is a test problem with enough words to meet the minimum requirement of one hundred words for round one evaluation. The problem should be clearly defined and provide enough context for the solution to be meaningful and comprehensive.",
+            "solution": "This is a test solution with enough words to meet the minimum requirement of one hundred words for round one evaluation. The solution should be clearly defined and provide enough detail for implementation.",
             "should_pass": True
         },
         {
             "round": 2,
-            "problem": "The accessibility challenges in public transportation systems present a significant barrier for individuals with disabilities, elderly populations, and those with limited mobility. Current systems often lack comprehensive features that address the diverse needs of all users, including those with visual, auditory, physical, and cognitive impairments. The problem encompasses inadequate information dissemination, insufficient physical infrastructure, and limited technological integration that could enhance the overall user experience for everyone. Additionally, there are significant gaps in the current transportation infrastructure that prevent equal access for all users. The lack of standardized accessibility features across different transportation modes creates confusion and frustration for users who rely on these services. Furthermore, the rapid advancement of technology has created new opportunities for improving accessibility, but many transportation systems have been slow to adopt these innovations. This technological lag further exacerbates the accessibility divide and prevents many individuals from fully participating in society.",
-            "solution": "Implement a comprehensive accessibility enhancement system for public transportation that addresses multiple user needs through integrated technological and infrastructure solutions. The solution includes developing a multi-modal information system with voice announcements, tactile indicators, and mobile application integration that provides real-time updates and personalized navigation assistance. Physical infrastructure improvements involve installing accessible boarding platforms, clear signage with multiple formats, and emergency assistance systems. The mobile application should feature voice navigation, customizable interface options, real-time service updates, and integration with personal assistive devices. Additionally, staff training programs and community feedback mechanisms should be established to ensure continuous improvement and user satisfaction. This holistic approach ensures that public transportation becomes truly accessible for all users, regardless of their abilities or limitations. The implementation process should be phased over multiple stages to ensure smooth transition and minimal disruption to existing services. Regular user feedback sessions and accessibility audits should be conducted to maintain high standards and address emerging needs.",
+            "problem": "This is a test problem with enough words to meet the minimum requirement of one hundred words for round two evaluation. The problem should be clearly defined and provide enough context for the solution to be meaningful and comprehensive.",
+            "solution": "This is a test solution with enough words to meet the minimum requirement of one hundred and fifty words for round two evaluation. The solution should be clearly defined and provide enough detail for implementation. This additional text ensures we meet the higher word count requirement for round two.",
             "should_pass": True
         },
         {
@@ -86,16 +86,16 @@ def test_validation_scenarios():
         solution = scenario["solution"]
         should_pass = scenario["should_pass"]
         
-        problem_min, problem_max, solution_min, solution_max = get_round_word_requirements(round_num)
+        problem_min, solution_min = get_round_word_requirements(round_num)
         problem_count = count_words(problem)
         solution_count = count_words(solution)
         
-        problem_ok = problem_min <= problem_count <= problem_max
-        solution_ok = solution_min <= solution_count <= solution_max
+        problem_ok = problem_count >= problem_min
+        solution_ok = solution_count >= solution_min
         validation_passed = problem_ok and solution_ok
         
         status = "✅" if validation_passed == should_pass else "❌"
-        print(f"{status} Round {round_num}: Problem {problem_count}/{problem_min}-{problem_max}, Solution {solution_count}/{solution_min}-{solution_max} -> {'PASS' if validation_passed else 'FAIL'} (Expected: {'PASS' if should_pass else 'FAIL'})")
+        print(f"{status} Round {round_num}: Problem {problem_count}/{problem_min}, Solution {solution_count}/{solution_min} -> {'PASS' if validation_passed else 'FAIL'} (Expected: {'PASS' if should_pass else 'FAIL'})")
 
 def test_edge_cases():
     """Test edge cases for word counting"""

@@ -473,6 +473,63 @@ class DatabaseManager:
             print(f"Error checking previous round completion: {e}")
             return False
 
+    def create_final_report(self, user_id: int, file_url: str) -> Optional[dict]:
+        """Create final report record"""
+        try:
+            new_report = FinalReport(
+                user_id=user_id,
+                file_url=file_url
+            )
+            self.db.add(new_report)
+            self.db.commit()
+            self.db.refresh(new_report)
+            return {
+                "id": new_report.id,
+                "user_id": new_report.user_id,
+                "file_url": new_report.file_url,
+                "created_at": new_report.created_at
+            }
+        except Exception as e:
+            self.db.rollback()
+            print(f"Error creating final report: {e}")
+            return None
+
+    def get_final_report(self, user_id: int) -> Optional[dict]:
+        """Get final report for a user"""
+        try:
+            report = self.db.query(FinalReport).filter(FinalReport.user_id == user_id).first()
+            if report:
+                return {
+                    "id": report.id,
+                    "user_id": report.user_id,
+                    "file_url": report.file_url,
+                    "created_at": report.created_at
+                }
+            return None
+        except Exception as e:
+            print(f"Error getting final report: {e}")
+            return None
+
+    def update_final_report_file_url(self, user_id: int, file_url: str) -> bool:
+        """Update file URL for final report"""
+        try:
+            updated_rows = (
+                self.db.query(FinalReport)
+                .filter_by(user_id=user_id)
+                .update({
+                    FinalReport.file_url: file_url
+                })
+            )
+            if updated_rows == 0:
+                self.db.rollback()
+                return False
+            self.db.commit()
+            return True
+        except Exception as e:
+            self.db.rollback()
+            print(f"Error updating final report file URL: {e}")
+            return False
+
 # Convenience functions
 def get_user_by_token(token: str) -> Optional[Dict]:
     """Get user by token"""
@@ -701,3 +758,56 @@ async def get_user_message_count_async(user_id: int, mode: str) -> int:
     import asyncio
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, get_user_message_count, user_id, mode)
+
+# Async functions for final reports
+async def create_final_report_async(user_id: int, file_url: str) -> Optional[dict]:
+    """Create final report using thread pool"""
+    import asyncio
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, create_final_report, user_id, file_url)
+
+async def get_final_report_async(user_id: int) -> Optional[dict]:
+    """Get final report using thread pool"""
+    import asyncio
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, get_final_report, user_id)
+
+async def update_final_report_file_url_async(user_id: int, file_url: str) -> bool:
+    """Update file URL for final report using thread pool"""
+    import asyncio
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, update_final_report_file_url, user_id, file_url)
+
+# Convenience functions for evaluation records
+def create_evaluation_record(user_id: int, problem: str, solution: str, ai_feedback: str | None, round: int, time_remaining: int) -> Optional[dict]:
+    """Create evaluation record"""
+    with DatabaseManager() as db:
+        return db.create_evaluation_record(user_id, problem, solution, ai_feedback, round, time_remaining)
+
+# Convenience functions for final reports
+def create_final_report(user_id: int, file_url: str) -> Optional[dict]:
+    """Create final report"""
+    with DatabaseManager() as db:
+        return db.create_final_report(user_id, file_url)
+
+def get_final_report(user_id: int) -> Optional[dict]:
+    """Get final report for a user"""
+    with DatabaseManager() as db:
+        return db.get_final_report(user_id)
+
+def update_final_report_file_url(user_id: int, file_url: str) -> bool:
+    """Update file URL for final report"""
+    with DatabaseManager() as db:
+        return db.update_final_report_file_url(user_id, file_url)
+
+class FinalReport(Base):
+    """Final report model for storing user submitted reports"""
+    __tablename__ = "final_report"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("user.user_id"), nullable=False)
+    file_url = Column(Text, nullable=False)  # Azure Storage URL
+    created_at = Column(TIMESTAMP, server_default=func.current_timestamp(), nullable=False)
+    
+    def __repr__(self):
+        return f"<FinalReport(id={self.id}, user_id={self.user_id}, file_url='{self.file_url}')>"

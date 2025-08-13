@@ -1,8 +1,8 @@
-from fastapi import FastAPI, Request, HTTPException, Depends
+from fastapi import FastAPI, Request, HTTPException, Depends, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, EmailStr, validator
-from datetime import datetime, timedelta, date, timezone
+from datetime import datetime, timedelta, date
 from typing import Dict, Optional, List
 import redis.asyncio as aioredis
 import json
@@ -11,19 +11,21 @@ import uuid
 from agents.agents_backend import agent1, agent2, chatbot_agent, run_agent
 from agents.database import (
     update_evaluation_round_time,
-    get_evaluation_data,
     get_evaluation_record_by_round_async,
     update_evaluation_record_async,
     complete_evaluation_round_async,
-    check_previous_round_completed_async
+    check_previous_round_completed_async,
+    create_final_report_async,
+    get_final_report_async,
+    update_final_report_file_url_async
 )
+from agents.azure_storage import azure_storage
 from agents.constants import (
     EVALUATION_ROUND_1_TIME,
     ROUND_1_PROBLEM_MIN_WORDS, ROUND_1_PROBLEM_MAX_WORDS, ROUND_1_SOLUTION_MIN_WORDS, ROUND_1_SOLUTION_MAX_WORDS,
     ROUND_2_PROBLEM_MIN_WORDS, ROUND_2_PROBLEM_MAX_WORDS, ROUND_2_SOLUTION_MIN_WORDS, ROUND_2_SOLUTION_MAX_WORDS,
     ROUND_3_PROBLEM_MIN_WORDS, ROUND_3_PROBLEM_MAX_WORDS, ROUND_3_SOLUTION_MIN_WORDS, ROUND_3_SOLUTION_MAX_WORDS,
-    ROUND_4_PROBLEM_MIN_WORDS, ROUND_4_PROBLEM_MAX_WORDS, ROUND_4_SOLUTION_MIN_WORDS, ROUND_4_SOLUTION_MAX_WORDS,
-    START_TIME, END_TIME, IST
+    ROUND_4_PROBLEM_MIN_WORDS, ROUND_4_PROBLEM_MAX_WORDS, ROUND_4_SOLUTION_MIN_WORDS, ROUND_4_SOLUTION_MAX_WORDS
 )
 from .memory_system import memory_system
 from fastapi import Query
@@ -50,22 +52,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.middleware("http")
-async def time_window_check(request: Request, call_next):
-    now = datetime.now(tz=IST)
-    print(f"[{now.isoformat()}]")
-
-    if not (START_TIME <= now <= END_TIME):
-        return JSONResponse(
-            status_code=423,
-            content={
-                "detail": "Access not allowed at this time"
-            }
-        )
-
-    # If within allowed time, proceed as normal
-    return await call_next(request)
-
 # Redis configuration for distributed caching
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
@@ -82,11 +68,11 @@ async def init_redis_client():
     try:
         # Build Redis URL properly
         if REDIS_PASSWORD:
-            redis_url = f"rediss://:{REDIS_PASSWORD}@{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}"
+            redis_url = f"redis://:{REDIS_PASSWORD}@{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}"
         else:
-            redis_url = f"rediss://{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}"
+            redis_url = f"redis://{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}"
         
-        redis_client = aioredis.from_url(
+        redis_client = await aioredis.from_url(
             redis_url,
             encoding="utf-8",
             decode_responses=True
@@ -188,6 +174,8 @@ class EvaluationSubmission(BaseModel):
     """Evaluation submission model for problem and solution"""
     problem: str
     solution: str
+
+
 
 def get_round_word_requirements(round: int) -> tuple[int, int, int, int]:
     """Get word count requirements for problem and solution based on round"""
@@ -567,16 +555,38 @@ async def submit_evaluation(
                 detail=f"Solution description must not exceed {solution_max_words} words. Current: {solution_word_count} words"
             )
         
-        # Get user's assigned agent_type for AI feedback
-        from agents.database import get_user_profile_async
-        user_profile = await get_user_profile_async(user_id)
-        agent_type = user_profile.get("agent_type", 1) if user_profile else 1
-        
-        # Select agent based on user's agent_type
-        assigned_agent = agent1 if agent_type == 1 else agent2
-        
-        # Prepare prompt for AI agent with round-specific requirements
-        ai_prompt = f"""Please provide feedback on the following problem and solution for Round {round}:
+        # For round 4 (final first thought), don't call AI agent - just save the data
+        if round == 4:
+            # Update evaluation record with problem and solution only (no AI feedback)
+            update_success = await update_evaluation_record_async(
+                user_id, 
+                round, 
+                submission.problem, 
+                submission.solution, 
+                None  # No AI feedback for round 4
+            )
+            
+            if not update_success:
+                raise HTTPException(
+                    status_code=500,
+                    detail="Failed to update evaluation record"
+                )
+            
+            return {
+                "message": "Final evaluation submitted successfully",
+                "ai_feedback": None,
+                "round": round,
+            }
+        else:
+            # For rounds 1-3, call AI agent to generate feedback
+            # Get user's assigned agent_type for AI feedback
+            agent_type = current_user.get("agent_type", 1)
+            
+            # Select agent based on user's agent_type
+            assigned_agent = agent1 if agent_type == 1 else agent2
+            
+            # Prepare prompt for AI agent with round-specific requirements
+            ai_prompt = f"""Please provide feedback on the following problem and solution for Round {round}:
 
 Problem: {submission.problem}
 
@@ -592,19 +602,19 @@ Round {round} Requirements:
 - Problem: {problem_min_words} ≤ x ≤ {problem_max_words} words (Current: {problem_word_count} words)
 - Solution: {solution_min_words} ≤ x ≤ {solution_max_words} words (Current: {solution_word_count} words)
 
-Please provide a comprehensive but concise response (200-400 words)."""
-        
-        # Call AI agent to generate feedback
-        ai_feedback = await run_agent(assigned_agent, user_id, ai_prompt, [], "o3", "eval")
-        
-        # Update evaluation record with problem, solution, and AI feedback
-        update_success = await update_evaluation_record_async(
-            user_id, 
-            round, 
-            submission.problem, 
-            submission.solution, 
-            ai_feedback
-        )
+Please provide a comprehensive but concise response (200-500 words)."""
+            
+            # Call AI agent to generate feedback
+            ai_feedback = await run_agent(assigned_agent, user_id, ai_prompt, [], "o3", "eval")
+            
+            # Update evaluation record with problem, solution, and AI feedback
+            update_success = await update_evaluation_record_async(
+                user_id, 
+                round, 
+                submission.problem, 
+                submission.solution, 
+                ai_feedback
+            )
         
         if not update_success:
             raise HTTPException(
@@ -616,7 +626,6 @@ Please provide a comprehensive but concise response (200-400 words)."""
             "message": "Evaluation submitted successfully",
             "ai_feedback": ai_feedback,
             "round": round,
-            "user_id": user_id
         }
         
     except HTTPException:
@@ -663,44 +672,6 @@ async def complete_evaluation_round(
                 detail=f"No evaluation record found for user {user_id} and round {round}"
             )
         
-        # Get word count requirements for this round
-        problem_min_words, problem_max_words, solution_min_words, solution_max_words = get_round_word_requirements(round)
-        
-        # Check if current round has been submitted (has problem and solution)
-        if not evaluation_record.problem.strip() or not evaluation_record.solution.strip():
-            raise HTTPException(
-                status_code=400,
-                detail=f"Round {round} must have problem and solution submitted before it can be completed"
-            )
-        
-        # Check word count requirements for completion
-        problem_word_count = count_words(evaluation_record.problem)
-        solution_word_count = count_words(evaluation_record.solution)
-        
-        if problem_word_count < problem_min_words:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Round {round} problem must be at least {problem_min_words} words. Current: {problem_word_count} words"
-            )
-        
-        if problem_word_count > problem_max_words:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Round {round} problem must not exceed {problem_max_words} words. Current: {problem_word_count} words"
-            )
-        
-        if solution_word_count < solution_min_words:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Round {round} solution must be at least {solution_min_words} words. Current: {solution_word_count} words"
-            )
-        
-        if solution_word_count > solution_max_words:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Round {round} solution must not exceed {solution_max_words} words. Current: {solution_word_count} words"
-            )
-        
         # Complete the round
         completion_success = await complete_evaluation_round_async(user_id, round)
         
@@ -709,6 +680,28 @@ async def complete_evaluation_round(
                 status_code=500,
                 detail="Failed to complete evaluation round"
             )
+        
+        # Trigger memory creation for completed evaluation round
+        try:
+            # Get user's agent type for memory creation
+            user_profile = current_user
+            agent_type = user_profile.get("agent_type", 1) if user_profile else 1
+            
+            # Check memory triggers for eval mode (round completion)
+            should_create_memory, triggers = await memory_system.check_memory_trigger(
+                user_id, 
+                "eval", 
+                round_completed=True
+            )
+            
+            # Create memory asynchronously if triggers are met
+            if should_create_memory:
+                await memory_system.create_memory_async(user_id, "eval", triggers, agent_type)
+                print(f"Evaluation memory created for user {user_id}, round {round} with triggers: {triggers}")
+                
+        except Exception as e:
+            print(f"Error in evaluation memory creation: {e}")
+            # Continue execution even if memory creation fails
         
         # Prepare response message
         if round == 4:
@@ -768,9 +761,7 @@ async def post_agent(input: ChatInput, current_user: Dict = Depends(get_current_
     await save_conversation_message_async(user_id, user_msg, "user", input.mode, agent_type)
     
     # Get relevant memories for RAG
-    memory_context = await memory_system.create_memory_context(
-        user_id, user_msg, top_k=3, time_weight_factor=0.1
-    )
+    memory_context = await memory_system.create_memory_context(user_id, user_msg, top_k=3)
     
     # Prepare enhanced prompt with memory context
     enhanced_prompt = user_msg
@@ -824,19 +815,13 @@ Please respond to the current message while considering the relevant context fro
                     round_completed = latest_record.completed_at is not None
         
         # Check memory triggers
-        if input.mode == "eval":
-            should_create_memory, triggers = await memory_system.check_memory_trigger(
-                user_id, 
-                input.mode, 
-                round_completed=round_completed
-            )
-        else:  # chat mode
-            should_create_memory, triggers = await memory_system.check_memory_trigger(
-                user_id, 
-                input.mode, 
-                message_count=message_count,
-                inactivity_detected=inactivity_detected
-            )
+        should_create_memory, triggers = await memory_system.check_memory_trigger(
+            user_id, 
+            input.mode, 
+            message_count=message_count,
+            inactivity_detected=inactivity_detected,
+            round_completed=round_completed
+        )
         
         # Create memory asynchronously if triggers are met
         if should_create_memory:
@@ -892,7 +877,20 @@ async def get_conversation_history(current_user: Dict = Depends(get_current_user
     
     return conversations
 
-
+@app.get("/memories")
+async def get_user_memories(current_user: Dict = Depends(get_current_user), query: str = "", top_k: int = 5):
+    """Get user's relevant memories for a query"""
+    user_id = current_user["user_id"]
+    
+    if not query:
+        raise HTTPException(status_code=400, detail="Query parameter is required")
+    
+    memories = await memory_system.retrieve_relevant_memories(user_id, query, top_k)
+    return {
+        "query": query,
+        "memories": memories,
+        "count": len(memories)
+    }
 
 @app.get("/users/profile")
 async def get_user_profile_endpoint(current_user: Dict = Depends(get_current_user)):
@@ -1123,3 +1121,188 @@ async def get_interview_history(request: InterviewHistory, current_user: Dict = 
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get interview history: {str(e)}")
+
+@app.post("/report/submit")
+async def submit_final_report(
+    file: UploadFile = File(...),
+    current_user: Dict = Depends(get_current_user)
+):
+    """
+    Submit final report file
+    
+    This endpoint:
+    1. Validates the file
+    2. Uploads file to Azure Storage
+    3. Saves file URL to database
+    4. Returns success response with file URL
+    """
+    user_id = current_user["user_id"]
+    
+    try:
+        # Check if user already has a report
+        existing_report = await get_final_report_async(user_id)
+        if existing_report:
+            raise HTTPException(
+                status_code=400,
+                detail="User already has a submitted report"
+            )
+        
+        # Validate file type
+        allowed_extensions = ['.pdf', '.doc', '.docx', '.txt']
+        file_extension = os.path.splitext(file.filename)[1].lower()
+        
+        if file_extension not in allowed_extensions:
+            raise HTTPException(
+                status_code=400,
+                detail=f"File type not allowed. Allowed types: {', '.join(allowed_extensions)}"
+            )
+        
+        # Validate file size (max 10MB)
+        max_size = 10 * 1024 * 1024  # 10MB
+        file_content = await file.read()
+        
+        if len(file_content) > max_size:
+            raise HTTPException(
+                status_code=400,
+                detail="File size too large. Maximum size is 10MB"
+            )
+        
+        # Upload to Azure Storage
+        file_url = azure_storage.upload_file(file_content, file.filename, user_id)
+        
+        if not file_url:
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to upload file to storage"
+            )
+        
+        # Create report in database
+        report_data = await create_final_report_async(
+            user_id=user_id,
+            file_url=file_url
+        )
+        
+        if not report_data:
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to save report to database"
+            )
+        
+        return {
+            "message": "Final report submitted successfully",
+            "report_id": report_data["id"],
+            "file_url": file_url,
+            "submitted_at": report_data["created_at"]
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error in submit_final_report: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="Internal server error occurred while processing report submission"
+        )
+
+@app.get("/report/get")
+async def get_final_report(current_user: Dict = Depends(get_current_user)):
+    """
+    Get final report for the authenticated user
+    """
+    user_id = current_user["user_id"]
+    
+    try:
+        report = await get_final_report_async(user_id)
+        
+        if not report:
+            raise HTTPException(
+                status_code=404,
+                detail="No final report found for this user"
+            )
+        
+        return report
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error in get_final_report: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="Internal server error occurred while retrieving report"
+        )
+
+@app.post("/report/upload-file")
+async def upload_report_file(
+    file: UploadFile = File(...),
+    current_user: Dict = Depends(get_current_user)
+):
+    """
+    Upload file for existing report
+    
+    This endpoint:
+    1. Validates the file
+    2. Uploads file to Azure Storage
+    3. Updates the report's file_url in database
+    """
+    user_id = current_user["user_id"]
+    
+    try:
+        # Check if user has a report
+        existing_report = await get_final_report_async(user_id)
+        if not existing_report:
+            raise HTTPException(
+                status_code=400,
+                detail="No report found. Please submit a report first"
+            )
+        
+        # Validate file type
+        allowed_extensions = ['.pdf', '.doc', '.docx', '.txt']
+        file_extension = os.path.splitext(file.filename)[1].lower()
+        
+        if file_extension not in allowed_extensions:
+            raise HTTPException(
+                status_code=400,
+                detail=f"File type not allowed. Allowed types: {', '.join(allowed_extensions)}"
+            )
+        
+        # Validate file size (max 10MB)
+        max_size = 10 * 1024 * 1024  # 10MB
+        file_content = await file.read()
+        
+        if len(file_content) > max_size:
+            raise HTTPException(
+                status_code=400,
+                detail="File size too large. Maximum size is 10MB"
+            )
+        
+        # Upload to Azure Storage
+        file_url = azure_storage.upload_file(file_content, file.filename, user_id)
+        
+        if not file_url:
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to upload file to storage"
+            )
+        
+        # Update report with new file URL
+        update_success = await update_final_report_file_url_async(user_id, file_url)
+        
+        if not update_success:
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to update report with file URL"
+            )
+        
+        return {
+            "message": "File uploaded successfully",
+            "file_url": file_url
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error in upload_report_file: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="Internal server error occurred while uploading file"
+        )

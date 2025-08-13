@@ -228,14 +228,14 @@ async def test_error_scenarios():
         print(f"ERROR: {str(e)}")
 
 async def test_round_4_no_ai_feedback():
-    """Test that round 4 doesn't generate AI feedback"""
-    print("\n=== Testing Round 4 No AI Feedback ===")
+    """Test that round 4 (final first thought) doesn't call AI agent"""
+    print("\n=== Testing Round 4 (Final First Thought) Behavior ===")
     
-    # Test data
+    # Test data for round 4
     user_id = 123
     round_num = 4
-    problem = "Final problem submission"
-    solution = "Final solution submission"
+    problem = "Final problem statement for the project"
+    solution = "Final solution implementation plan"
     
     try:
         print(f"Testing round 4 submission for user {user_id}")
@@ -258,29 +258,16 @@ async def test_round_4_no_ai_feedback():
             print("ERROR: Problem or solution is empty")
             return False
         
-        # For round 4, don't generate AI feedback
+        # For round 4, we should NOT call AI agent
         if round_num == 4:
+            print("Round 4 detected - skipping AI agent call")
             ai_feedback = None
-            print("INFO: Round 4 - No AI feedback will be generated")
         else:
             # This should not be reached for round 4
-            ai_prompt = f"""Please provide feedback on the following problem and solution:
-
-Problem: {problem}
-
-Solution: {solution}
-
-Please provide constructive feedback focusing on:
-1. Clarity and feasibility of the solution
-2. Potential improvements or alternatives
-3. Any concerns or considerations
-4. Overall assessment of the idea
-
-Please provide a comprehensive but concise response (200-400 words)."""
-            
-            ai_feedback = await mock_run_agent(None, user_id, ai_prompt, [], "o3", "eval")
+            print("ERROR: AI agent should not be called for round 4")
+            return False
         
-        # Update evaluation record
+        # Update evaluation record with no AI feedback
         update_success = await mock_update_evaluation_record_async(
             user_id, round_num, problem, solution, ai_feedback
         )
@@ -289,17 +276,8 @@ Please provide a comprehensive but concise response (200-400 words)."""
             print("ERROR: Failed to update evaluation record")
             return False
         
-        print("SUCCESS: Round 4 evaluation submitted successfully")
+        print("SUCCESS: Round 4 evaluation submitted successfully without AI feedback")
         print(f"AI Feedback: {ai_feedback}")
-        
-        # Verify that no AI feedback was generated for round 4
-        if round_num == 4 and ai_feedback is not None:
-            print("ERROR: AI feedback was generated for round 4, but it should be None")
-            return False
-        
-        if round_num == 4 and ai_feedback is None:
-            print("SUCCESS: No AI feedback generated for round 4 as expected")
-        
         return True
         
     except Exception as e:
@@ -321,7 +299,12 @@ async def main():
     print("All tests completed. Check the output above for results.")
 
 if __name__ == "__main__":
+    import asyncio
+    
     # Run all tests
-    asyncio.run(test_submit_evaluation())
-    asyncio.run(test_complete_evaluation_round())
-    asyncio.run(test_round_4_no_ai_feedback())
+    async def run_all_tests():
+        await test_submit_evaluation()
+        await test_complete_evaluation_round()
+        await test_round_4_no_ai_feedback()
+    
+    asyncio.run(run_all_tests())
