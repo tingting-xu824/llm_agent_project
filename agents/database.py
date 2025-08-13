@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, update, Column, Integer, String, Date, DateTime, Text, TIMESTAMP, BigInteger, ForeignKey, UniqueConstraint
+from sqlalchemy import create_engine, update, Column, Integer, String, Date, DateTime, Text, TIMESTAMP, BigInteger, ForeignKey, UniqueConstraint, Boolean
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.sql import func
@@ -811,3 +811,192 @@ class FinalReport(Base):
     
     def __repr__(self):
         return f"<FinalReport(id={self.id}, user_id={self.user_id}, file_url='{self.file_url}')>"
+
+# Interview-related models
+class InterviewMessage(Base):
+    """Interview message model for storing interview conversation"""
+    __tablename__ = "interview_message"
+    
+    message_id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("user.user_id"), nullable=False)
+    content_type = Column(String(20), nullable=False)  # 'Questions' or 'Answers'
+    content = Column(Text, nullable=False)
+    created_at = Column(TIMESTAMP, server_default=func.current_timestamp(), nullable=False)
+    is_end = Column(Boolean, nullable=False, default=False)
+    
+    def __repr__(self):
+        return f"<InterviewMessage(message_id={self.message_id}, user_id={self.user_id}, content_type='{self.content_type}')>"
+
+class InterviewEvaluation(Base):
+    """Interview evaluation model for storing interview summary and ratings"""
+    __tablename__ = "interview_evaluation"
+    
+    eval_id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("user.user_id"), nullable=False)
+    summary_text = Column(Text)
+    summary_rate = Column(Integer)  # 1-5 rating
+    interview_rate = Column(Integer)  # 1-5 rating
+    created_at = Column(TIMESTAMP, server_default=func.current_timestamp(), nullable=False)
+    
+    def __repr__(self):
+        return f"<InterviewEvaluation(eval_id={self.eval_id}, user_id={self.user_id})>"
+
+# Interview-related database operations
+def add_interview_message(user_id: int, content_type: str, content: str, is_end: bool = False) -> Optional[int]:
+    """Add a new interview message"""
+    with DatabaseManager() as db:
+        try:
+            interview_message = InterviewMessage(
+                user_id=user_id,
+                content_type=content_type,
+                content=content,
+                is_end=is_end
+            )
+            db.db.add(interview_message)
+            db.db.commit()
+            db.db.refresh(interview_message)
+            return interview_message.message_id
+        except Exception as e:
+            db.db.rollback()
+            print(f"Error adding interview message: {e}")
+            return None
+
+def get_interview_messages(user_id: int) -> List[Dict]:
+    """Get all interview messages for a user"""
+    with DatabaseManager() as db:
+        try:
+            messages = db.db.query(InterviewMessage).filter(
+                InterviewMessage.user_id == user_id
+            ).order_by(InterviewMessage.created_at).all()
+            
+            return [
+                {
+                    "message_id": msg.message_id,
+                    "user_id": msg.user_id,
+                    "content_type": msg.content_type,
+                    "content": msg.content,
+                    "created_at": msg.created_at,
+                    "is_end": msg.is_end
+                }
+                for msg in messages
+            ]
+        except Exception as e:
+            print(f"Error getting interview messages: {e}")
+            return []
+
+def create_interview_evaluation(user_id: int, summary_text: str = None, summary_rate: int = None, interview_rate: int = None) -> Optional[int]:
+    """Create a new interview evaluation record"""
+    with DatabaseManager() as db:
+        try:
+            interview_eval = InterviewEvaluation(
+                user_id=user_id,
+                summary_text=summary_text,
+                summary_rate=summary_rate,
+                interview_rate=interview_rate
+            )
+            db.db.add(interview_eval)
+            db.db.commit()
+            db.db.refresh(interview_eval)
+            return interview_eval.eval_id
+        except Exception as e:
+            db.db.rollback()
+            print(f"Error creating interview evaluation: {e}")
+            return None
+
+def update_interview_evaluation(eval_id: int, summary_text: str = None, summary_rate: int = None, interview_rate: int = None) -> bool:
+    """Update an existing interview evaluation record"""
+    with DatabaseManager() as db:
+        try:
+            interview_eval = db.db.query(InterviewEvaluation).filter(
+                InterviewEvaluation.eval_id == eval_id
+            ).first()
+            
+            if not interview_eval:
+                return False
+            
+            if summary_text is not None:
+                interview_eval.summary_text = summary_text
+            if summary_rate is not None:
+                interview_eval.summary_rate = summary_rate
+            if interview_rate is not None:
+                interview_eval.interview_rate = interview_rate
+            
+            db.db.commit()
+            return True
+        except Exception as e:
+            db.db.rollback()
+            print(f"Error updating interview evaluation: {e}")
+            return False
+
+def get_or_create_interview_evaluation(user_id: int) -> Optional[int]:
+    """Get existing interview evaluation ID or create new one"""
+    with DatabaseManager() as db:
+        try:
+            # Check if evaluation already exists
+            interview_eval = db.db.query(InterviewEvaluation).filter(
+                InterviewEvaluation.user_id == user_id
+            ).first()
+            
+            if interview_eval:
+                return interview_eval.eval_id
+            
+            # Create new evaluation record
+            new_eval = InterviewEvaluation(user_id=user_id)
+            db.db.add(new_eval)
+            db.db.commit()
+            db.db.refresh(new_eval)
+            return new_eval.eval_id
+            
+        except Exception as e:
+            db.db.rollback()
+            print(f"Error getting or creating interview evaluation: {e}")
+            return None
+
+def check_interview_completed(user_id: int) -> bool:
+    """Check if user has completed an interview"""
+    with DatabaseManager() as db:
+        try:
+            count = db.db.query(InterviewEvaluation).filter(
+                InterviewEvaluation.user_id == user_id
+            ).count()
+            return count > 0
+        except Exception as e:
+            print(f"Error checking interview completion: {e}")
+            return False
+
+# Async versions of interview functions
+async def add_interview_message_async(user_id: int, content_type: str, content: str, is_end: bool = False) -> Optional[int]:
+    """Add a new interview message using thread pool"""
+    import asyncio
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, add_interview_message, user_id, content_type, content, is_end)
+
+async def get_interview_messages_async(user_id: int) -> List[Dict]:
+    """Get all interview messages for a user using thread pool"""
+    import asyncio
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, get_interview_messages, user_id)
+
+async def create_interview_evaluation_async(user_id: int, summary_text: str = None, summary_rate: int = None, interview_rate: int = None) -> Optional[int]:
+    """Create a new interview evaluation record using thread pool"""
+    import asyncio
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, create_interview_evaluation, user_id, summary_text, summary_rate, interview_rate)
+
+async def update_interview_evaluation_async(eval_id: int, summary_text: str = None, summary_rate: int = None, interview_rate: int = None) -> bool:
+    """Update an existing interview evaluation record using thread pool"""
+    import asyncio
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, update_interview_evaluation, eval_id, summary_text, summary_rate, interview_rate)
+
+async def get_or_create_interview_evaluation_async(user_id: int) -> Optional[int]:
+    """Get existing interview evaluation ID or create new one using thread pool"""
+    import asyncio
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, get_or_create_interview_evaluation, user_id)
+
+async def check_interview_completed_async(user_id: int) -> bool:
+    """Check if user has completed an interview using thread pool"""
+    import asyncio
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, check_interview_completed, user_id)
