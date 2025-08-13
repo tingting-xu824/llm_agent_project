@@ -1,3 +1,5 @@
+from datetime import datetime, timezone, timedelta
+
 EVALUATION_ROUND_1_TIME=60 * 60
 EVALUATION_ROUND_2_TIME=30 * 60
 EVALUATION_ROUND_3_TIME=30 * 60
@@ -38,3 +40,8 @@ ROUND_4_PROBLEM_MIN_WORDS = 100
 ROUND_4_PROBLEM_MAX_WORDS = 500
 ROUND_4_SOLUTION_MIN_WORDS = 250
 ROUND_4_SOLUTION_MAX_WORDS = 500
+
+# Start and end dates of hackathon
+IST = timezone(timedelta(hours=5, minutes=30))
+START_TIME = datetime(2025, 8, 13, 10, 0, tzinfo=IST)
+END_TIME   = datetime(2025, 8, 14, 10, 0, tzinfo=IST)
