@@ -549,14 +549,25 @@ async def submit_evaluation(
                 detail=f"Solution description must not exceed {solution_max_words} words. Current: {solution_word_count} words"
             )
         
-        # Get user's assigned agent_type for AI feedback
-        agent_type = current_user.get("agent_type", 1)
-        
-        # Select agent based on user's agent_type
-        assigned_agent = agent1 if agent_type == 1 else agent2
-        
-        # Prepare prompt for AI agent with round-specific requirements
-        ai_prompt = f"""Please provide feedback on the following problem and solution for Round {round}:
+        # For round 4 (final first thought), don't generate AI feedback
+        if round == 4:
+            ai_feedback = None
+            update_success = await update_evaluation_record_async(
+                user_id, 
+                round, 
+                submission.problem, 
+                submission.solution, 
+                ai_feedback
+            )
+        else:
+            # Get user's assigned agent_type for AI feedback
+            agent_type = current_user.get("agent_type", 1)
+            
+            # Select agent based on user's agent_type
+            assigned_agent = agent1 if agent_type == 1 else agent2
+            
+            # Prepare prompt for AI agent with round-specific requirements
+            ai_prompt = f"""Please provide feedback on the following problem and solution for Round {round}:
 
 Problem: {submission.problem}
 
@@ -573,18 +584,18 @@ Round {round} Requirements:
 - Solution: {solution_min_words} ≤ x ≤ {solution_max_words} words (Current: {solution_word_count} words)
 
 Please provide a comprehensive but concise response (200-500 words)."""
-        
-        # Call AI agent to generate feedback
-        ai_feedback = await run_agent(assigned_agent, user_id, ai_prompt, [], "o3", "eval")
-        
-        # Update evaluation record with problem, solution, and AI feedback
-        update_success = await update_evaluation_record_async(
-            user_id, 
-            round, 
-            submission.problem, 
-            submission.solution, 
-            ai_feedback
-        )
+            
+            # Call AI agent to generate feedback
+            ai_feedback = await run_agent(assigned_agent, user_id, ai_prompt, [], "o3", "eval")
+            
+            # Update evaluation record with problem, solution, and AI feedback
+            update_success = await update_evaluation_record_async(
+                user_id, 
+                round, 
+                submission.problem, 
+                submission.solution, 
+                ai_feedback
+            )
         
         if not update_success:
             raise HTTPException(
@@ -592,11 +603,18 @@ Please provide a comprehensive but concise response (200-500 words)."""
                 detail="Failed to update evaluation record"
             )
         
-        return {
-            "message": "Evaluation submitted successfully",
-            "ai_feedback": ai_feedback,
-            "round": round,
-        }
+        # For round 4, don't return AI feedback in response
+        if round == 4:
+            return {
+                "message": "Final evaluation submitted successfully",
+                "round": round,
+            }
+        else:
+            return {
+                "message": "Evaluation submitted successfully",
+                "ai_feedback": ai_feedback,
+                "round": round,
+            }
         
     except HTTPException:
         raise

@@ -33,6 +33,15 @@ The evaluation system consists of 4 rounds where users submit problems and solut
 }
 ```
 
+**Note**: For Round 4 (final first thought), no AI feedback is generated. The response will be:
+```json
+{
+  "message": "Final evaluation submitted successfully",
+  "round": 4,
+  "user_id": 123
+}
+```
+
 **Error Responses**:
 - `400 Bad Request`: 
   - Previous round not completed
@@ -45,10 +54,10 @@ The evaluation system consists of 4 rounds where users submit problems and solut
 1. Check if previous round is completed (except for round 1)
 2. Verify evaluation record exists for user and round
 3. Validate problem and solution are not empty
-4. Get user's assigned AI agent (based on user_id last digit)
-5. Generate AI feedback using the agent
-6. Update database record with problem, solution, and AI feedback
-7. Return success response with AI feedback
+4. For rounds 1-3: Get user's assigned AI agent and generate AI feedback
+5. For round 4: Skip AI feedback generation (final first thought submission)
+6. Update database record with problem, solution, and AI feedback (if applicable)
+7. Return success response with AI feedback (except for round 4)
 
 ### 2. POST /evaluation/complete?round=X
 
@@ -108,7 +117,7 @@ CREATE TABLE idea_evaluation (
 1. **Round 1**: User submits problem and solution → AI feedback → Complete round
 2. **Round 2**: User submits problem and solution → AI feedback → Complete round  
 3. **Round 3**: User submits problem and solution → AI feedback → Complete round
-4. **Round 4**: User submits problem and solution → AI feedback → Complete round (final)
+4. **Round 4**: User submits problem and solution → No AI feedback → Complete round (final first thought)
 
 ## AI Agent Assignment
 
