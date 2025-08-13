@@ -62,4 +62,6 @@ Thumbs.db
 *.tmp
 *.temp
 
-*.sh
+*.sh.DS_Store
+__pycache__/
+*.pyc

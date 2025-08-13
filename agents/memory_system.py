@@ -121,30 +121,52 @@ class MemorySystem:
             print(f"Error extracting memory content: {e}")
             return f"Memory extraction failed: {str(e)}"
 
-    async def create_memory_context(self, user_id: int, user_message: str, top_k: int = 3) -> str:
-        """Create memory context for user message (async) with fallback support"""
-        if not self.memory_manager or self.fallback_mode:
-            # Use fallback context from in-memory storage
-            return self._get_fallback_context(user_id, user_message, top_k)
+    async def create_memory_context(self, user_id: int, user_message: str, top_k: int = 3, 
+                                   time_weight_factor: float = 0.1) -> str:
+        """
+        Create memory context for user message (async implementation)
+        
+        Args:
+            user_id: User ID
+            user_message: Current user message
+            top_k: Number of relevant memories to retrieve
+            time_weight_factor: Weight factor for time decay (default 0.1 for tie-breaking)
+            
+        Returns:
+            str: Memory context string
+        """
+        if not self.memory_manager:
+            return ""
         
         try:
-            memories = await self.memory_manager.retrieve_relevant_memories(user_id, user_message, top_k)
+            # Retrieve relevant memories with time weighting
+            memories = await self.memory_manager.retrieve_relevant_memories(
+                user_id, user_message, top_k, time_weight_factor
+            )
+            
             if not memories:
                 return ""
             
+            # Build context string with enhanced information
             context_parts = []
             for i, memory in enumerate(memories, 1):
                 memory_type = memory.get('memory_type', 'unknown')
                 content = memory.get('memory_content', '')
                 similarity = memory.get('similarity', 0)
-                context_parts.append(f"Memory {i} ({memory_type}, relevance: {similarity:.2f}): {content}")
+                final_score = memory.get('final_score', 0)
+                hours_old = memory.get('hours_old', 0)
+                
+                # Enhanced context with time information
+                context_parts.append(
+                    f"Memory {i} ({memory_type}, semantic: {similarity:.2f}, "
+                    f"final_score: {final_score:.2f}, age: {hours_old:.1f}h): {content}"
+                )
             
-            self._reset_error_count()  # Reset error count on success
             return "\n".join(context_parts)
+            
         except Exception as e:
-            self._handle_error(e, "create_memory_context")
-            # Fallback to in-memory context
-            return self._get_fallback_context(user_id, user_message, top_k)
+            print(f"Error creating memory context: {e}")
+            return ""
     
     def _get_fallback_context(self, user_id: int, user_message: str, top_k: int) -> str:
         """Get context from fallback in-memory storage"""
@@ -244,20 +266,29 @@ class MemorySystem:
             logger.error(f"Failed to store fallback memory: {e}")
             return False
 
-    async def retrieve_relevant_memories(self, user_id: int, query: str, top_k: int = 5) -> List[Dict]:
-        """Retrieve relevant memories for query (async) with fallback support"""
-        if not self.memory_manager or self.fallback_mode:
-            # Return fallback memories from in-memory storage
-            return self._get_fallback_memories(user_id, top_k)
+    async def retrieve_relevant_memories(self, user_id: int, query: str, top_k: int = 5, 
+                                       time_weight_factor: float = 0.1) -> List[Dict]:
+        """
+        Retrieve relevant memories for query (async implementation)
+        
+        Args:
+            user_id: User ID
+            query: Search query
+            top_k: Number of memories to retrieve
+            time_weight_factor: Weight factor for time decay (default 0.1 for tie-breaking)
+            
+        Returns:
+            List[Dict]: List of relevant memories with metadata
+        """
+        if not self.memory_manager:
+            return []
         
         try:
-            memories = await self.memory_manager.retrieve_relevant_memories(user_id, query, top_k)
-            self._reset_error_count()  # Reset error count on success
+            memories = await self.memory_manager.retrieve_relevant_memories(user_id, query, top_k, time_weight_factor)
             return memories
         except Exception as e:
-            self._handle_error(e, "retrieve_relevant_memories")
-            # Fallback to in-memory memories
-            return self._get_fallback_memories(user_id, top_k)
+            print(f"Error retrieving memories: {e}")
+            return []
     
     def _get_fallback_memories(self, user_id: int, top_k: int) -> List[Dict]:
         """Get memories from fallback in-memory storage"""

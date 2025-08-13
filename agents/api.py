@@ -11,6 +11,10 @@ import uuid
 from agents.agents_backend import agent1, agent2, chatbot_agent, run_agent
 from agents.database import (
     update_evaluation_round_time,
+<<<<<<< Updated upstream
+=======
+    get_evaluation_data,
+>>>>>>> Stashed changes
     get_evaluation_record_by_round_async,
     update_evaluation_record_async,
     complete_evaluation_round_async,
@@ -566,14 +570,38 @@ async def submit_evaluation(
                 detail=f"Solution description must not exceed {solution_max_words} words. Current: {solution_word_count} words"
             )
         
+<<<<<<< Updated upstream
+        # For round 4 (final first thought), don't generate AI feedback
+        if round == 4:
+            ai_feedback = None
+            update_success = await update_evaluation_record_async(
+                user_id, 
+                round, 
+                submission.problem, 
+                submission.solution, 
+                ai_feedback
+            )
+        else:
+            # Get user's assigned agent_type for AI feedback
+            agent_type = current_user.get("agent_type", 1)
+            
+            # Select agent based on user's agent_type
+            assigned_agent = agent1 if agent_type == 1 else agent2
+            
+            # Prepare prompt for AI agent with round-specific requirements
+            ai_prompt = f"""Please provide feedback on the following problem and solution for Round {round}:
+=======
         # Get user's assigned agent_type for AI feedback
-        agent_type = current_user.get("agent_type", 1)
+        from agents.database import get_user_profile_async
+        user_profile = await get_user_profile_async(user_id)
+        agent_type = user_profile.get("agent_type", 1) if user_profile else 1
         
         # Select agent based on user's agent_type
         assigned_agent = agent1 if agent_type == 1 else agent2
         
         # Prepare prompt for AI agent with round-specific requirements
         ai_prompt = f"""Please provide feedback on the following problem and solution for Round {round}:
+>>>>>>> Stashed changes
 
 Problem: {submission.problem}
 
@@ -589,7 +617,22 @@ Round {round} Requirements:
 - Problem: {problem_min_words} ≤ x ≤ {problem_max_words} words (Current: {problem_word_count} words)
 - Solution: {solution_min_words} ≤ x ≤ {solution_max_words} words (Current: {solution_word_count} words)
 
+<<<<<<< Updated upstream
 Please provide a comprehensive but concise response (200-500 words)."""
+            
+            # Call AI agent to generate feedback
+            ai_feedback = await run_agent(assigned_agent, user_id, ai_prompt, [], "o3", "eval")
+            
+            # Update evaluation record with problem, solution, and AI feedback
+            update_success = await update_evaluation_record_async(
+                user_id, 
+                round, 
+                submission.problem, 
+                submission.solution, 
+                ai_feedback
+            )
+=======
+Please provide a comprehensive but concise response (200-400 words)."""
         
         # Call AI agent to generate feedback
         ai_feedback = await run_agent(assigned_agent, user_id, ai_prompt, [], "o3", "eval")
@@ -602,6 +645,7 @@ Please provide a comprehensive but concise response (200-500 words)."""
             submission.solution, 
             ai_feedback
         )
+>>>>>>> Stashed changes
         
         if not update_success:
             raise HTTPException(
@@ -609,11 +653,27 @@ Please provide a comprehensive but concise response (200-500 words)."""
                 detail="Failed to update evaluation record"
             )
         
+<<<<<<< Updated upstream
+        # For round 4, don't return AI feedback in response
+        if round == 4:
+            return {
+                "message": "Final evaluation submitted successfully",
+                "round": round,
+            }
+        else:
+            return {
+                "message": "Evaluation submitted successfully",
+                "ai_feedback": ai_feedback,
+                "round": round,
+            }
+=======
         return {
             "message": "Evaluation submitted successfully",
             "ai_feedback": ai_feedback,
             "round": round,
+            "user_id": user_id
         }
+>>>>>>> Stashed changes
         
     except HTTPException:
         raise
@@ -659,6 +719,47 @@ async def complete_evaluation_round(
                 detail=f"No evaluation record found for user {user_id} and round {round}"
             )
         
+<<<<<<< Updated upstream
+=======
+        # Get word count requirements for this round
+        problem_min_words, problem_max_words, solution_min_words, solution_max_words = get_round_word_requirements(round)
+        
+        # Check if current round has been submitted (has problem and solution)
+        if not evaluation_record.problem.strip() or not evaluation_record.solution.strip():
+            raise HTTPException(
+                status_code=400,
+                detail=f"Round {round} must have problem and solution submitted before it can be completed"
+            )
+        
+        # Check word count requirements for completion
+        problem_word_count = count_words(evaluation_record.problem)
+        solution_word_count = count_words(evaluation_record.solution)
+        
+        if problem_word_count < problem_min_words:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Round {round} problem must be at least {problem_min_words} words. Current: {problem_word_count} words"
+            )
+        
+        if problem_word_count > problem_max_words:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Round {round} problem must not exceed {problem_max_words} words. Current: {problem_word_count} words"
+            )
+        
+        if solution_word_count < solution_min_words:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Round {round} solution must be at least {solution_min_words} words. Current: {solution_word_count} words"
+            )
+        
+        if solution_word_count > solution_max_words:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Round {round} solution must not exceed {solution_max_words} words. Current: {solution_word_count} words"
+            )
+        
+>>>>>>> Stashed changes
         # Complete the round
         completion_success = await complete_evaluation_round_async(user_id, round)
         
@@ -668,6 +769,7 @@ async def complete_evaluation_round(
                 detail="Failed to complete evaluation round"
             )
         
+<<<<<<< Updated upstream
         # Trigger memory creation for completed evaluation round
         try:
             # Get user's agent type for memory creation
@@ -690,6 +792,8 @@ async def complete_evaluation_round(
             print(f"Error in evaluation memory creation: {e}")
             # Continue execution even if memory creation fails
         
+=======
+>>>>>>> Stashed changes
         # Prepare response message
         if round == 4:
             message = f"Round {round} completed successfully. This was the final round."
@@ -699,6 +803,10 @@ async def complete_evaluation_round(
         return {
             "message": message,
             "round": round,
+<<<<<<< Updated upstream
+=======
+            "user_id": user_id,
+>>>>>>> Stashed changes
             "completed_at": datetime.utcnow().isoformat()
         }
         
@@ -748,7 +856,9 @@ async def post_agent(input: ChatInput, current_user: Dict = Depends(get_current_
     await save_conversation_message_async(user_id, user_msg, "user", input.mode, agent_type)
     
     # Get relevant memories for RAG
-    memory_context = await memory_system.create_memory_context(user_id, user_msg, top_k=3)
+    memory_context = await memory_system.create_memory_context(
+        user_id, user_msg, top_k=3, time_weight_factor=0.1
+    )
     
     # Prepare enhanced prompt with memory context
     enhanced_prompt = user_msg
@@ -802,13 +912,19 @@ Please respond to the current message while considering the relevant context fro
                     round_completed = latest_record.completed_at is not None
         
         # Check memory triggers
-        should_create_memory, triggers = await memory_system.check_memory_trigger(
-            user_id, 
-            input.mode, 
-            message_count=message_count,
-            inactivity_detected=inactivity_detected,
-            round_completed=round_completed
-        )
+        if input.mode == "eval":
+            should_create_memory, triggers = await memory_system.check_memory_trigger(
+                user_id, 
+                input.mode, 
+                round_completed=round_completed
+            )
+        else:  # chat mode
+            should_create_memory, triggers = await memory_system.check_memory_trigger(
+                user_id, 
+                input.mode, 
+                message_count=message_count,
+                inactivity_detected=inactivity_detected
+            )
         
         # Create memory asynchronously if triggers are met
         if should_create_memory:
@@ -864,20 +980,7 @@ async def get_conversation_history(current_user: Dict = Depends(get_current_user
     
     return conversations
 
-@app.get("/memories")
-async def get_user_memories(current_user: Dict = Depends(get_current_user), query: str = "", top_k: int = 5):
-    """Get user's relevant memories for a query"""
-    user_id = current_user["user_id"]
-    
-    if not query:
-        raise HTTPException(status_code=400, detail="Query parameter is required")
-    
-    memories = await memory_system.retrieve_relevant_memories(user_id, query, top_k)
-    return {
-        "query": query,
-        "memories": memories,
-        "count": len(memories)
-    }
+
 
 @app.get("/users/profile")
 async def get_user_profile_endpoint(current_user: Dict = Depends(get_current_user)):

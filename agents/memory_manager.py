@@ -436,16 +436,82 @@ class MemoryManager:
             logger.error(f"Failed to store memory: {e}")
             raise
     
-    async def retrieve_relevant_memories(self, user_id: int, query_text: str, top_k: int = 3) -> List[Dict]:
-        """Retrieve most relevant memories for a query using vector similarity"""
+    async def retrieve_relevant_memories(self, user_id: int, query_text: str, top_k: int = 3, 
+                                       time_weight_factor: float = 0.1) -> List[Dict]:
+        """
+        Retrieve most relevant memories for a query using vector similarity with time weighting
+        
+        Args:
+            user_id: User ID
+            query_text: Query text for similarity search
+            top_k: Number of memories to retrieve
+            time_weight_factor: Weight factor for time decay (default 0.1 for tie-breaking)
+        """
         try:
             query_embedding = await self.get_embedding_with_cache(query_text)
             
-            # Use asyncio to run the database operation in a thread pool
-            loop = asyncio.get_event_loop()
-            results = await loop.run_in_executor(None, self._retrieve_memories_sync, user_id, query_embedding, top_k)
-            logger.debug(f"Retrieved {len(results)} relevant memories for user {user_id}")
-            return results
+            with self.get_db_connection() as conn:
+                cursor = conn.cursor(cursor_factory=RealDictCursor)
+                
+                # Get more candidates for time-weighted reordering
+                candidate_count = min(top_k * 3, 20)
+                
+                cursor.execute("""
+                    SELECT memory_id, memory_content, memory_type, _metadata, created_at,
+                           1 - (embedding <=> %s::VECTOR(1536)) as similarity
+                    FROM memory_vectors 
+                    WHERE user_id = %s
+                    ORDER BY embedding <=> %s::VECTOR(1536)
+                    LIMIT %s
+                """, (
+                    self.vector_to_sql(query_embedding),
+                    user_id,
+                    self.vector_to_sql(query_embedding),
+                    candidate_count
+                ))
+                candidates = cursor.fetchall()
+                
+                if not candidates:
+                    logger.debug(f"No memories found for user {user_id}")
+                    return []
+                
+                # Apply time weighting to candidates
+                weighted_candidates = []
+                current_time = datetime.utcnow()
+                
+                for candidate in candidates:
+                    # Calculate time decay (hours-based for 24-hour projects)
+                    time_diff = current_time - candidate['created_at']
+                    hours_old = time_diff.total_seconds() / 3600
+                    time_decay = 1.0 / (1.0 + hours_old * 0.1)  # Decay rate: 0.1 per hour
+                    
+                    # Simple weighted combination: semantic + time_weight * time_decay
+                    semantic_score = candidate['similarity']
+                    final_score = semantic_score + time_weight_factor * time_decay
+                    
+                    weighted_candidates.append({
+                        **candidate,
+                        'final_score': final_score,
+                        'time_decay': time_decay,
+                        'hours_old': hours_old
+                    })
+                
+                # Sort by final weighted score and return top_k
+                weighted_candidates.sort(key=lambda x: x['final_score'], reverse=True)
+                top_memories = weighted_candidates[:top_k]
+                
+                logger.debug(f"Retrieved {len(top_memories)} time-weighted memories for user {user_id}")
+                logger.debug(f"Time weight factor: {time_weight_factor}")
+                
+                # Log debug info about the weighting
+                if top_memories:
+                    for i, memory in enumerate(top_memories):
+                        logger.debug(f"Memory {i+1}: semantic={memory['similarity']:.3f}, "
+                                   f"time_decay={memory['time_decay']:.3f}, "
+                                   f"final_score={memory['final_score']:.3f}, "
+                                   f"hours_old={memory['hours_old']:.1f}")
+                
+                return top_memories
                 
         except Exception as e:
             logger.error(f"Failed to retrieve memories: {e}")
