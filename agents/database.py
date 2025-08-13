@@ -397,11 +397,7 @@ class DatabaseManager:
             print(f"Error getting evaluation record by round: {e}")
             return None
 
-<<<<<<< Updated upstream
     def update_evaluation_record(self, user_id: int, round: int, problem: str, solution: str, ai_feedback: str | None) -> bool:
-=======
-    def update_evaluation_record(self, user_id: int, round: int, problem: str, solution: str, ai_feedback: str) -> bool:
->>>>>>> Stashed changes
         """Update problem, solution, and ai_feedback for a specific evaluation record"""
         try:
             updated_rows = (
@@ -447,11 +443,7 @@ class DatabaseManager:
                     solution="",
                     ai_feedback=None,
                     round=next_round,
-<<<<<<< Updated upstream
                     time_remaining= EVALUATION_ROUND_TIMINGS.get(next_round)
-=======
-                    time_remaining=0  # Will be set by the system
->>>>>>> Stashed changes
                 )
                 self.db.add(new_record)
             
@@ -544,11 +536,7 @@ def get_evaluation_record_by_round(user_id: int, round: int):
     with DatabaseManager() as db:
         return db.get_evaluation_record_by_round(user_id, round)
 
-<<<<<<< Updated upstream
 def update_evaluation_record(user_id: int, round: int, problem: str, solution: str, ai_feedback: str | None) -> bool:
-=======
-def update_evaluation_record(user_id: int, round: int, problem: str, solution: str, ai_feedback: str) -> bool:
->>>>>>> Stashed changes
     """Update problem, solution, and ai_feedback for a specific evaluation record"""
     with DatabaseManager() as db:
         return db.update_evaluation_record(user_id, round, problem, solution, ai_feedback)
@@ -608,11 +596,7 @@ async def get_evaluation_record_by_round_async(user_id: int, round: int):
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, get_evaluation_record_by_round, user_id, round)
 
-<<<<<<< Updated upstream
 async def update_evaluation_record_async(user_id: int, round: int, problem: str, solution: str, ai_feedback: str | None) -> bool:
-=======
-async def update_evaluation_record_async(user_id: int, round: int, problem: str, solution: str, ai_feedback: str) -> bool:
->>>>>>> Stashed changes
     """Update evaluation record using thread pool"""
     import asyncio
     loop = asyncio.get_event_loop()
