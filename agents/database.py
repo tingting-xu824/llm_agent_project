@@ -3,7 +3,7 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.sql import func
 import os
-from typing import Optional, Dict, List, Any
+from typing import Optional, Dict, List, Any, Union
 from datetime import date
 from agents.constants import EVALUATION_ROUND_TIMINGS
 
@@ -220,7 +220,7 @@ class DatabaseManager:
             print(f"Error getting user profile: {e}")
             return None
     
-    def create_evaluation_record(self, user_id: int, problem: str, solution: str, ai_feedback: str | None, round: int, time_remaining: int) -> Optional[dict]:
+    def create_evaluation_record(self, user_id: int, problem: str, solution: str, ai_feedback: Optional[str], round: int, time_remaining: int) -> Optional[dict]:
         try:
             new_idea_eval = IdeaEvaluation(user_id = user_id, problem = problem, solution = solution, ai_feedback = ai_feedback, round = round, time_remaining = time_remaining)
             self.db.add(new_idea_eval)
@@ -309,7 +309,7 @@ class DatabaseManager:
             print(f"Error getting user conversations: {e}")
             return []
     
-    def save_memory_vector(self, user_id: int, content: str, embedding: List[float], metadata: Dict | None = None) -> Optional[Column[int]]:
+    def save_memory_vector(self, user_id: int, content: str, embedding: List[float], metadata: Optional[Dict] = None) -> Optional[Column[int]]:
         """Save a memory vector for RAG functionality"""
         try:
             memory_vector = MemoryVector(
@@ -397,7 +397,7 @@ class DatabaseManager:
             print(f"Error getting evaluation record by round: {e}")
             return None
 
-    def update_evaluation_record(self, user_id: int, round: int, problem: str, solution: str, ai_feedback: str | None) -> bool:
+    def update_evaluation_record(self, user_id: int, round: int, problem: str, solution: str, ai_feedback: Optional[str]) -> bool:
         """Update problem, solution, and ai_feedback for a specific evaluation record"""
         try:
             updated_rows = (
@@ -566,7 +566,7 @@ def get_user_conversations(user_id: int, limit: int = 50) -> List[Dict]:
     with DatabaseManager() as db:
         return db.get_user_conversations(user_id, limit)
 
-def save_memory_vector(user_id: int, content: str, embedding: List[float], metadata: Dict | None = None) -> Optional[Column[int]]:
+def save_memory_vector(user_id: int, content: str, embedding: List[float], metadata: Optional[Dict] = None) -> Optional[Column[int]]:
     """Save a memory vector"""
     with DatabaseManager() as db:
         return db.save_memory_vector(user_id, content, embedding, metadata)
@@ -580,7 +580,7 @@ def get_evaluation_data(user_id: int, round: Optional[int] = None):
     with DatabaseManager() as db:
         return db.get_evaluation_data(user_id, round)
     
-def create_evaluation_round_data(user_id: int, problem: str, solution: str, ai_feedback: str | None, round: int, time_remaining: int):
+def create_evaluation_round_data(user_id: int, problem: str, solution: str, ai_feedback: Optional[str], round: int, time_remaining: int):
     with DatabaseManager() as db:
         return db.create_evaluation_record(user_id, problem, solution, ai_feedback, round, time_remaining)
     
@@ -593,7 +593,7 @@ def get_evaluation_record_by_round(user_id: int, round: int):
     with DatabaseManager() as db:
         return db.get_evaluation_record_by_round(user_id, round)
 
-def update_evaluation_record(user_id: int, round: int, problem: str, solution: str, ai_feedback: str | None) -> bool:
+def update_evaluation_record(user_id: int, round: int, problem: str, solution: str, ai_feedback: Optional[str]) -> bool:
     """Update problem, solution, and ai_feedback for a specific evaluation record"""
     with DatabaseManager() as db:
         return db.update_evaluation_record(user_id, round, problem, solution, ai_feedback)
@@ -635,7 +635,7 @@ async def update_user_agent_type_async(user_id: int, agent_type: int) -> bool:
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, update_user_agent_type, user_id, agent_type)
 
-async def create_evaluation_record_async(user_id: int, problem: str, solution: str, ai_feedback: str | None, round: int, time_remaining: int) -> Optional[dict]:
+async def create_evaluation_record_async(user_id: int, problem: str, solution: str, ai_feedback: Optional[str], round: int, time_remaining: int) -> Optional[dict]:
     """Create evaluation record using thread pool"""
     import asyncio
     loop = asyncio.get_event_loop()
@@ -653,7 +653,7 @@ async def get_evaluation_record_by_round_async(user_id: int, round: int):
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, get_evaluation_record_by_round, user_id, round)
 
-async def update_evaluation_record_async(user_id: int, round: int, problem: str, solution: str, ai_feedback: str | None) -> bool:
+async def update_evaluation_record_async(user_id: int, round: int, problem: str, solution: str, ai_feedback: Optional[str]) -> bool:
     """Update evaluation record using thread pool"""
     import asyncio
     loop = asyncio.get_event_loop()
@@ -779,7 +779,7 @@ async def update_final_report_file_url_async(user_id: int, file_url: str) -> boo
     return await loop.run_in_executor(None, update_final_report_file_url, user_id, file_url)
 
 # Convenience functions for evaluation records
-def create_evaluation_record(user_id: int, problem: str, solution: str, ai_feedback: str | None, round: int, time_remaining: int) -> Optional[dict]:
+def create_evaluation_record(user_id: int, problem: str, solution: str, ai_feedback: Optional[str], round: int, time_remaining: int) -> Optional[dict]:
     """Create evaluation record"""
     with DatabaseManager() as db:
         return db.create_evaluation_record(user_id, problem, solution, ai_feedback, round, time_remaining)
