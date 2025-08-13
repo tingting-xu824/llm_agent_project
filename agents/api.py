@@ -765,12 +765,32 @@ Please respond to the current message while considering the relevant context fro
             time_diff = (datetime.utcnow() - last_activity).total_seconds()
             inactivity_detected = time_diff > memory_system.memory_manager.inactivity_threshold
         
+        # For eval mode, check current round completion status
+        round_completed = False
+        if input.mode == "eval":
+            from agents.database import get_evaluation_data_async
+            # Get all evaluation records for the user
+            eval_data = await get_evaluation_data_async(user_id)
+            if eval_data:
+                # Find the current active round (the one that's not completed)
+                current_round_record = None
+                for record in eval_data:
+                    if record.completed_at is None:
+                        current_round_record = record
+                        break
+                
+                # If no active round found, check if the latest round is completed
+                if current_round_record is None and eval_data:
+                    latest_record = max(eval_data, key=lambda x: x.round)
+                    round_completed = latest_record.completed_at is not None
+        
         # Check memory triggers
         should_create_memory, triggers = await memory_system.check_memory_trigger(
             user_id, 
             input.mode, 
             message_count=message_count,
-            inactivity_detected=inactivity_detected
+            inactivity_detected=inactivity_detected,
+            round_completed=round_completed
         )
         
         # Create memory asynchronously if triggers are met

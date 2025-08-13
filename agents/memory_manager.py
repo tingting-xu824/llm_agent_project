@@ -504,13 +504,46 @@ class MemoryManager:
         if message_count > 0 and message_count % self.chat_message_threshold == 0:
             triggers.append("message_count")
         
-
-        
-        # Trigger 3: Inactivity check (using Redis for tracking)
+        # Trigger 2: Inactivity check (using Redis for tracking)
         if inactivity_detected:
-            triggers.append("inactivity")
+            # Check if we should skip inactivity trigger based on latest memory
+            should_skip_inactivity = await self._should_skip_inactivity_trigger(user_id)
+            if not should_skip_inactivity:
+                triggers.append("inactivity")
         
         return len(triggers) > 0, triggers
+    
+    async def _should_skip_inactivity_trigger(self, user_id: int) -> bool:
+        """Check if we should skip inactivity trigger based on latest memory and conversation history"""
+        try:
+            # Get the latest memory for the user
+            latest_memory = self.get_latest_memory(user_id)
+            
+            # If no memory exists, allow the trigger
+            if not latest_memory:
+                return False
+            
+            # If the latest memory is not conversation_chunk, allow the trigger
+            if latest_memory['memory_type'] != 'conversation_chunk':
+                return False
+            
+            # If the latest memory is conversation_chunk, check if there are new conversations since then
+            memory_created_at = latest_memory['created_at']
+            has_new_conversations = self.has_new_conversations_since(user_id, memory_created_at)
+            
+            # If no new conversations since the last conversation_chunk memory, skip the trigger
+            if not has_new_conversations:
+                logger.info(f"Skipping inactivity trigger for user {user_id}: no new conversations since last conversation_chunk memory")
+                return True
+            
+            # If there are new conversations, allow the trigger
+            logger.info(f"Allowing inactivity trigger for user {user_id}: new conversations detected since last conversation_chunk memory")
+            return False
+            
+        except Exception as e:
+            logger.error(f"Error checking inactivity trigger skip condition for user {user_id}: {e}")
+            # In case of error, allow the trigger to be safe
+            return False
     
     def get_evaluation_data_by_user(self, user_id: int, limit: int = 10) -> List[Dict]:
         """Retrieve recent evaluation data for a user from idea_evaluation table"""
@@ -670,6 +703,40 @@ class MemoryManager:
         except Exception as e:
             logger.error(f"Failed to get memory count for user {user_id}: {e}")
             return 0
+    
+    def get_latest_memory(self, user_id: int) -> Optional[Dict]:
+        """Get the latest memory for a user"""
+        try:
+            with self.get_db_connection() as conn:
+                cursor = conn.cursor(cursor_factory=RealDictCursor)
+                cursor.execute("""
+                    SELECT memory_id, memory_content, memory_type, _metadata, created_at
+                    FROM memory_vectors 
+                    WHERE user_id = %s
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                """, (user_id,))
+                result = cursor.fetchone()
+                return result
+        except Exception as e:
+            logger.error(f"Failed to get latest memory for user {user_id}: {e}")
+            return None
+    
+    def has_new_conversations_since(self, user_id: int, since_timestamp) -> bool:
+        """Check if user has new conversations since a given timestamp"""
+        try:
+            with self.get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT COUNT(*) 
+                    FROM conversation 
+                    WHERE user_id = %s AND timestamp > %s
+                """, (user_id, since_timestamp))
+                count = cursor.fetchone()[0]
+                return count > 0
+        except Exception as e:
+            logger.error(f"Failed to check new conversations for user {user_id}: {e}")
+            return False
     
     def get_recent_memories(self, user_id: int, limit: int = 5) -> List[Dict]:
         """Get recent memories for a user"""
