@@ -122,20 +122,8 @@ def test_rag_system():
     else:
         print(f"   Failed: {response.text}")
     
-    # 7. Test memory retrieval API
-    print("\n7. Testing memory retrieval API...")
-    response = requests.get(f"{BASE_URL}/memories?query=machine learning&top_k=3", headers=headers)
-    
-    if response.status_code == 200:
-        memories = response.json()
-        print(f"   Found {memories['count']} relevant memories for 'machine learning'")
-        for i, memory in enumerate(memories['memories'][:2], 1):
-            print(f"   Memory {i}: {memory['content'][:50]}... (similarity: {memory['similarity']:.2f})")
-    else:
-        print(f"   Failed: {response.text}")
-    
-    # 8. Test eval mode with memory
-    print("\n8. Testing eval mode with memory...")
+    # 7. Test eval mode with memory
+    print("\n7. Testing eval mode with memory...")
     time.sleep(2)
     
     eval_message = "Based on what you know about me, what kind of programming challenges would I be interested in?"

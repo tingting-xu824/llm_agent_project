@@ -847,20 +847,7 @@ async def get_conversation_history(current_user: Dict = Depends(get_current_user
     
     return conversations
 
-@app.get("/memories")
-async def get_user_memories(current_user: Dict = Depends(get_current_user), query: str = "", top_k: int = 5):
-    """Get user's relevant memories for a query"""
-    user_id = current_user["user_id"]
-    
-    if not query:
-        raise HTTPException(status_code=400, detail="Query parameter is required")
-    
-    memories = await memory_system.retrieve_relevant_memories(user_id, query, top_k)
-    return {
-        "query": query,
-        "memories": memories,
-        "count": len(memories)
-    }
+
 
 @app.get("/users/profile")
 async def get_user_profile_endpoint(current_user: Dict = Depends(get_current_user)):

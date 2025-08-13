@@ -78,7 +78,6 @@ A comprehensive AI agent system with Retrieval-Augmented Generation (RAG), Postg
 ### Agent Interaction
 - `POST /agent` - Send message to AI agent
 - `GET /conversations` - Get conversation history
-- `GET /memories` - Get relevant memories
 
 ## Database Schema
 
