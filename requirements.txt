@@ -5,7 +5,6 @@ openai>=1.10.0
 fastapi>=0.100.0
 uvicorn>=0.20.0
 python-multipart>=0.0.6
-email-validator>=2.0.0
 
 # Database dependencies
 psycopg2-binary>=2.9.0
@@ -13,7 +12,6 @@ sqlalchemy>=2.0.0
 
 # Caching and session management
 redis>=4.5.0
-aioredis>=2.0.0
 
 # Utility dependencies
 python-dotenv>=1.0.0

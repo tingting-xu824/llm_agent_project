@@ -27,7 +27,12 @@ from .memory_system import memory_system
 from fastapi import Query
 from sqlalchemy import Column
 
-app = FastAPI()
+ENV = os.getenv("ENV", "dev")
+
+if ENV == "prod":
+    app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+else:
+    app = FastAPI()
 
 # CORS setup
 origins = [
@@ -453,7 +458,7 @@ async def get_evaluation_by_round(
 @app.post("/evaluation/time")
 async def update_evaluation_time_remaining(
     current_user: Dict = Depends(get_current_user),
-    round: Optional[int] = Query(None, alias="round", ge=1, le=3, description="Agent round (1, 2, or 3)")
+    round: Optional[int] = Query(None, alias="round", ge=1, le=4, description="Agent round (1, 2, 3 or 4)")
 ):
     """ Update evaluation time for a user for specific round mentioned """
     if not round:

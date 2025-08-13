@@ -1,0 +1,5 @@
+test/
+.venv/
+*.sh
+*.log
+**/__pycache__
