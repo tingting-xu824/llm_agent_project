@@ -8,7 +8,7 @@ import redis.asyncio as aioredis
 import json
 import os
 import uuid
-from agents.agents_backend import agent1, agent2, chatbot_agent, run_agent
+from agents.agents_backend import agent1, agent2, chatbot_agent, run_agent, run_interview_agent
 from agents.database import (
     update_evaluation_round_time,
     get_evaluation_record_by_round_async,
@@ -17,7 +17,11 @@ from agents.database import (
     check_previous_round_completed_async,
     create_final_report_async,
     get_final_report_async,
-    update_final_report_file_url_async
+    update_final_report_file_url_async,
+    add_interview_message_async,
+    get_interview_messages_async,
+    get_or_create_interview_evaluation_async,
+    update_interview_evaluation_async
 )
 from agents.azure_storage import azure_storage
 from agents.constants import (
@@ -1048,11 +1052,21 @@ async def initialize_interview(request: InterviewInit, current_user: Dict = Depe
         }
         await save_interview_session(user_id, session_data)
         
-        # Create initial interview question
-        initial_question = "Hello! I'm here to conduct an interview with you about your experience with our AI agents. Let's start with a simple question: How would you rate your overall experience with the AI agents you interacted with today? Please rate it on a scale of 1-10, where 1 is very poor and 10 is excellent."
+        # Generate initial interview question using interview agent
+        initial_response = await run_interview_agent(user_id, "", [], "gpt-4o-mini")
         
-        # Add initial question to chat history
-        await add_interview_message(user_id, "assistant", initial_question)
+        # Parse JSON response
+        try:
+            response_data = json.loads(initial_response)
+            initial_question = response_data.get("message", "")
+            is_end = response_data.get("is_end", False)
+        except json.JSONDecodeError:
+            # Fallback if JSON parsing fails
+            initial_question = initial_response
+            is_end = False
+        
+        # Add initial question to database
+        await add_interview_message_async(user_id, "Questions", initial_question, is_end)
         
         return {
             "response": initial_question,
@@ -1080,31 +1094,96 @@ async def interview_chat(request: InterviewChat, current_user: Dict = Depends(ge
         if not session or session.get("status") != "active":
             raise HTTPException(status_code=400, detail="No active interview session found. Please initialize the interview first.")
         
-        # Add user message to history
-        await add_interview_message(user_id, "user", user_message)
+        # Check if this is a rating response (1-5)
+        is_rating = False
+        rating_value = None
+        try:
+            # Try to parse as integer and check if it's 1-5
+            rating = int(user_message.strip())
+            if 1 <= rating <= 5:
+                is_rating = True
+                rating_value = rating
+        except (ValueError, AttributeError):
+            # User input is not a valid number, leave rating as None
+            is_rating = False
+            rating_value = None
         
-        # Get chat history for context
-        history = await get_interview_chat_history(user_id)
+        # Add user message to database
+        await add_interview_message_async(user_id, "Answers", user_message, False)
         
-        # Generate interview bot response based on context
-        # This is a simple interview bot - you can enhance it with more sophisticated logic
-        if len(history) <= 2:  # First exchange
-            response = "Thank you for your rating! Could you tell me more about what aspects of the AI agents you found most helpful or most challenging?"
-        elif len(history) <= 4:  # Second exchange
-            response = "That's very helpful feedback. Did you notice any differences between the different AI agents you interacted with? If so, what were they?"
-        elif len(history) <= 6:  # Third exchange
-            response = "Interesting! One more question: How likely are you to use AI agents like these in the future, and what would make you more likely to use them?"
-        elif len(history) <= 8:  # Fourth exchange
-            response = "Thank you for sharing your thoughts! Is there anything else you'd like to tell us about your experience or any suggestions for improvement?"
-        else:  # Final exchange
-            response = "Thank you so much for participating in this interview! Your feedback is very valuable to us. Is there anything else you'd like to add before we conclude?"
-            # Mark session as completed
-            session["status"] = "completed"
-            session["completed_at"] = datetime.utcnow().isoformat()
-            await save_interview_session(user_id, session)
+        # Get interview history from database for context
+        db_messages = await get_interview_messages_async(user_id)
         
-        # Add assistant response to history
-        await add_interview_message(user_id, "assistant", response)
+        # Convert database messages to conversation history format
+        history = []
+        for msg in db_messages:
+            if msg["content_type"] == "Questions":
+                history.append(("assistant", msg["content"]))
+            elif msg["content_type"] == "Answers":
+                history.append(("user", msg["content"]))
+        
+        # Generate interview response using interview agent
+        ai_response = await run_interview_agent(user_id, user_message, history, "gpt-4o-mini")
+        
+        # Parse JSON response
+        try:
+            response_data = json.loads(ai_response)
+            response = response_data.get("message", "")
+            is_end = response_data.get("is_end", False)
+        except json.JSONDecodeError:
+            # Fallback if JSON parsing fails
+            response = ai_response
+            is_end = False
+        
+        # Add AI response to database
+        await add_interview_message_async(user_id, "Questions", response, is_end)
+        
+        # Handle evaluation phase
+        if is_end:
+            # Check if this is the summary phase
+            if "summary" in response.lower() and "rate" in response.lower():
+                # Create or get evaluation record for summary
+                eval_id = await get_or_create_interview_evaluation_async(user_id)
+                # Extract summary text (everything before the rating question)
+                summary_text = response.split("How well does the summary")[0].strip()
+                await update_interview_evaluation_async(eval_id, summary_text=summary_text)
+            
+            # Check if this is the final rating question
+            elif "AI interviewer" in response and "human interviewer" in response:
+                # This is the final interview rating question
+                # The summary_rate will be updated when user responds to this
+                pass
+            
+            # Check if this is the final closing message
+            elif "Thank you for participating" in response:
+                # Mark session as completed
+                session["status"] = "completed"
+                session["completed_at"] = datetime.utcnow().isoformat()
+                await save_interview_session(user_id, session)
+        
+        # Handle rating responses
+        if is_rating and rating_value is not None:
+            # Get the last AI message to determine which rating this is
+            db_messages = await get_interview_messages_async(user_id)
+            ai_messages = [msg for msg in db_messages if msg["content_type"] == "Questions"]
+            
+            if ai_messages:
+                last_ai_message = ai_messages[-1]["content"]
+                
+                # Check if this is summary rating
+                if "How well does the summary" in last_ai_message:
+                    eval_id = await get_or_create_interview_evaluation_async(user_id)
+                    await update_interview_evaluation_async(eval_id, summary_rate=rating_value)
+                
+                # Check if this is interview rating
+                elif "AI interviewer" in last_ai_message and "human interviewer" in last_ai_message:
+                    eval_id = await get_or_create_interview_evaluation_async(user_id)
+                    await update_interview_evaluation_async(eval_id, interview_rate=rating_value)
+        else:
+            # User input is not a valid rating, but we still need to handle the case
+            # where AI expects a rating but user provides invalid input
+            # In this case, we don't update any rating fields, leaving them as NULL in database
+            pass
         
         return {
             "response": response
