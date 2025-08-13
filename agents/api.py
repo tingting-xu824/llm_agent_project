@@ -25,7 +25,8 @@ from agents.constants import (
     ROUND_1_PROBLEM_MIN_WORDS, ROUND_1_PROBLEM_MAX_WORDS, ROUND_1_SOLUTION_MIN_WORDS, ROUND_1_SOLUTION_MAX_WORDS,
     ROUND_2_PROBLEM_MIN_WORDS, ROUND_2_PROBLEM_MAX_WORDS, ROUND_2_SOLUTION_MIN_WORDS, ROUND_2_SOLUTION_MAX_WORDS,
     ROUND_3_PROBLEM_MIN_WORDS, ROUND_3_PROBLEM_MAX_WORDS, ROUND_3_SOLUTION_MIN_WORDS, ROUND_3_SOLUTION_MAX_WORDS,
-    ROUND_4_PROBLEM_MIN_WORDS, ROUND_4_PROBLEM_MAX_WORDS, ROUND_4_SOLUTION_MIN_WORDS, ROUND_4_SOLUTION_MAX_WORDS
+    ROUND_4_PROBLEM_MIN_WORDS, ROUND_4_PROBLEM_MAX_WORDS, ROUND_4_SOLUTION_MIN_WORDS, ROUND_4_SOLUTION_MAX_WORDS,
+    START_TIME, END_TIME, IST
 )
 from .memory_system import memory_system
 from fastapi import Query
@@ -52,6 +53,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.middleware("http")
+async def time_window_check(request: Request, call_next):
+    now = datetime.now(tz=IST)
+    print(f"[{now.isoformat()}]")
+
+    if not (START_TIME <= now <= END_TIME):
+        return JSONResponse(
+            status_code=423,
+            content={
+                "detail": "Access not allowed at this time"
+            }
+        )
+
+    # If within allowed time, proceed as normal
+    return await call_next(request)
+
+
 # Redis configuration for distributed caching
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
@@ -68,11 +86,11 @@ async def init_redis_client():
     try:
         # Build Redis URL properly
         if REDIS_PASSWORD:
-            redis_url = f"redis://:{REDIS_PASSWORD}@{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}"
+            redis_url = f"rediss://:{REDIS_PASSWORD}@{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}"
         else:
-            redis_url = f"redis://{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}"
+            redis_url = f"rediss://{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}"
         
-        redis_client = await aioredis.from_url(
+        redis_client = aioredis.from_url(
             redis_url,
             encoding="utf-8",
             decode_responses=True
