@@ -855,7 +855,7 @@ Please respond to the current message while considering the relevant context fro
         # Check user inactivity status
         last_activity = await get_user_last_request_time_async(user_id)
         inactivity_detected = False
-        if last_activity:
+        if last_activity and memory_system.memory_manager:
             time_diff = (datetime.utcnow() - last_activity).total_seconds()
             inactivity_detected = time_diff > memory_system.memory_manager.inactivity_threshold
         
