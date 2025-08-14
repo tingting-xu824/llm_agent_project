@@ -1023,23 +1023,34 @@ async def save_interview_session(user_id: int, session_data: Dict):
     interview_sessions[user_id] = session_data
 
 async def get_interview_chat_history(user_id: int) -> List[Dict]:
-    """Get interview chat history for user"""
-    if redis_client:
-        try:
-            history_key = get_interview_history_key(user_id)
-            history_data = await redis_client.get(history_key)
-            if history_data:
-                return json.loads(history_data)
-        except aioredis.ConnectionError as e:
-            print(f"Redis connection error getting interview history: {e}")
-        except aioredis.RedisError as e:
-            print(f"Redis error getting interview history: {e}")
-        except json.JSONDecodeError as e:
-            print(f"JSON decode error in interview history: {e}")
-        except Exception as e:
-            print(f"Unexpected error getting interview history from Redis: {e}")
-    
-    return interview_chat_history.get(user_id, [])
+    """Get interview chat history for user from database"""
+    try:
+        # Get messages from database
+        db_messages = await get_interview_messages_async(user_id)
+        
+        # Convert database messages to chat history format
+        chat_history = []
+        for msg in db_messages:
+            chat_history.append({
+                "role": "assistant" if msg["content_type"] == "Questions" else "user",
+                "content": msg["content"],
+                "timestamp": msg["created_at"].isoformat() if msg["created_at"] else datetime.utcnow().isoformat()
+            })
+        
+        return chat_history
+    except Exception as e:
+        print(f"Error getting interview chat history from database: {e}")
+        # Fallback to Redis if database fails
+        if redis_client:
+            try:
+                history_key = get_interview_history_key(user_id)
+                history_data = await redis_client.get(history_key)
+                if history_data:
+                    return json.loads(history_data)
+            except Exception as redis_e:
+                print(f"Redis fallback also failed: {redis_e}")
+        
+        return interview_chat_history.get(user_id, [])
 
 async def save_interview_chat_history(user_id: int, history: List[Dict]):
     """Save interview chat history for user"""
@@ -1092,6 +1103,14 @@ async def initialize_interview(current_user: Dict = Depends(get_current_user)):
         
         # Add initial question to database
         await add_interview_message_async(user_id, "Questions", initial_question, is_end)
+        
+        # Also save to Redis cache for immediate access
+        initial_message = {
+            "role": "assistant",
+            "content": initial_question,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        await save_interview_chat_history(user_id, [initial_message])
         
         return {
             "response": initial_question,
@@ -1150,6 +1169,17 @@ async def interview_chat(request: InterviewChat, current_user: Dict = Depends(ge
         
         # Add AI response to database
         await add_interview_message_async(user_id, "Questions", response, is_end)
+        
+        # Update Redis cache with latest history from database
+        db_messages = await get_interview_messages_async(user_id)
+        chat_history = []
+        for msg in db_messages:
+            chat_history.append({
+                "role": "assistant" if msg["content_type"] == "Questions" else "user",
+                "content": msg["content"],
+                "timestamp": msg["created_at"].isoformat() if msg["created_at"] else datetime.utcnow().isoformat()
+            })
+        await save_interview_chat_history(user_id, chat_history)
         
         # Handle evaluation phase
         if is_end:
