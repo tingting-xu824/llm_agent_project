@@ -38,7 +38,7 @@ from fastapi import Query
 from sqlalchemy import Column
 
 # Interview-specific error handling functions
-async def run_interview_agent_with_retry(user_id: int, user_message: str, history: list[tuple[str, str]], model: str, max_retries: int = 3) -> str:
+async def run_interview_agent_with_retry(user_id: int, user_message: str, history: list[tuple[str, str]], model: str, max_retries: int = 3):
     """Execute interview agent with retry mechanism"""
     for attempt in range(max_retries):
         try:
@@ -107,12 +107,19 @@ async def time_window_check(request: Request, call_next):
     print(f"[{now.isoformat()}]")
 
     if not (START_TIME <= now <= END_TIME):
-        return JSONResponse(
+        req_url = str(request.headers.get("origin"))
+        response = JSONResponse(
             status_code=423,
             content={
                 "detail": "Access not allowed at this time"
             }
         )
+        response.headers["Access-Control-Allow-Origin"] = req_url
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Access-Control-Allow-Methods"] = "OPTIONS, GET, POST"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+
+        return response
 
     # If within allowed time, proceed as normal
     return await call_next(request)
@@ -1374,14 +1381,6 @@ async def upload_report_file(
     user_id = current_user["user_id"]
     
     try:
-        # Check if user has a report
-        existing_report = await get_final_report_async(user_id)
-        if not existing_report:
-            raise HTTPException(
-                status_code=400,
-                detail="No report found. Please submit a report first"
-            )
-        
         # Validate file type
         allowed_extensions = ['.pdf', '.doc', '.docx', '.txt']
         file_extension = os.path.splitext(file.filename)[1].lower()

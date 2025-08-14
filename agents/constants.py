@@ -43,5 +43,5 @@ ROUND_4_SOLUTION_MAX_WORDS = 500
 
 # Start and end dates of hackathon
 IST = timezone(timedelta(hours=5, minutes=30))
-START_TIME = datetime(2025, 8, 13, 10, 0, tzinfo=IST)
-END_TIME   = datetime(2025, 8, 14, 10, 0, tzinfo=IST)
+START_TIME = datetime(2025, 8, 14, 10, 37, tzinfo=IST)
+END_TIME   = datetime(2025, 8, 16, 10, 0, tzinfo=IST)

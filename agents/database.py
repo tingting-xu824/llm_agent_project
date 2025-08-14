@@ -1,9 +1,10 @@
 from sqlalchemy import create_engine, update, Column, Integer, String, Date, DateTime, Text, TIMESTAMP, BigInteger, ForeignKey, UniqueConstraint, Boolean
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.sql import func
 import os
-from typing import Optional, Dict, List, Any, Union
+from typing import Optional, Dict, List, Any
 from datetime import date
 from agents.constants import EVALUATION_ROUND_TIMINGS
 
@@ -501,7 +502,6 @@ class DatabaseManager:
             if report:
                 return {
                     "id": report.id,
-                    "user_id": report.user_id,
                     "file_url": report.file_url,
                     "created_at": report.created_at
                 }
@@ -513,21 +513,20 @@ class DatabaseManager:
     def update_final_report_file_url(self, user_id: int, file_url: str) -> bool:
         """Update file URL for final report"""
         try:
-            updated_rows = (
-                self.db.query(FinalReport)
-                .filter_by(user_id=user_id)
-                .update({
-                    FinalReport.file_url: file_url
-                })
+            stmt = insert(FinalReport).values(
+                user_id=user_id,
+                file_url=file_url
+            ).on_conflict_do_update(
+                index_elements=["user_id"],  # column(s) with UNIQUE constraint
+                set_={"file_url": file_url}
             )
-            if updated_rows == 0:
-                self.db.rollback()
-                return False
+
+            self.db.execute(stmt)
             self.db.commit()
             return True
         except Exception as e:
             self.db.rollback()
-            print(f"Error updating final report file URL: {e}")
+            print(f"Error upserting final report file URL: {e}")
             return False
 
 # Convenience functions
@@ -805,7 +804,7 @@ class FinalReport(Base):
     __tablename__ = "final_report"
     
     id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(Integer, ForeignKey("user.user_id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("user.user_id"), unique=True, nullable=False)
     file_url = Column(Text, nullable=False)  # Azure Storage URL
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp(), nullable=False)
     
