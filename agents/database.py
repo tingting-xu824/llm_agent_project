@@ -474,21 +474,27 @@ class DatabaseManager:
             print(f"Error checking previous round completion: {e}")
             return False
 
-    def create_final_report(self, user_id: int, file_url: str) -> Optional[dict]:
-        """Create final report record"""
+    def complete_final_report(self, user_id: int) -> Optional[dict]:
+        """Complete final report"""
         try:
-            new_report = FinalReport(
-                user_id=user_id,
-                file_url=file_url
-            )
-            self.db.add(new_report)
+            stmt = (update(FinalReport)
+                .where(FinalReport.user_id == user_id)
+                .values(
+                    completed_at = func.current_timestamp()
+                )
+                .returning(FinalReport))
+            
+            result = self.db.execute(stmt).scalar()
+
+            if result is None:
+                self.db.rollback()
+                return None  # No matching row found
+
             self.db.commit()
-            self.db.refresh(new_report)
             return {
-                "id": new_report.id,
-                "user_id": new_report.user_id,
-                "file_url": new_report.file_url,
-                "created_at": new_report.created_at
+                "file_url": result.file_url,
+                "created_at": result.created_at,
+                "completed_at": result.completed_at
             }
         except Exception as e:
             self.db.rollback()
@@ -503,7 +509,8 @@ class DatabaseManager:
                 return {
                     "id": report.id,
                     "file_url": report.file_url,
-                    "created_at": report.created_at
+                    "created_at": report.created_at,
+                    "completed_at": report.completed_at
                 }
             return None
         except Exception as e:
@@ -758,13 +765,6 @@ async def get_user_message_count_async(user_id: int, mode: str) -> int:
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, get_user_message_count, user_id, mode)
 
-# Async functions for final reports
-async def create_final_report_async(user_id: int, file_url: str) -> Optional[dict]:
-    """Create final report using thread pool"""
-    import asyncio
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, create_final_report, user_id, file_url)
-
 async def get_final_report_async(user_id: int) -> Optional[dict]:
     """Get final report using thread pool"""
     import asyncio
@@ -783,11 +783,10 @@ def create_evaluation_record(user_id: int, problem: str, solution: str, ai_feedb
     with DatabaseManager() as db:
         return db.create_evaluation_record(user_id, problem, solution, ai_feedback, round, time_remaining)
 
-# Convenience functions for final reports
-def create_final_report(user_id: int, file_url: str) -> Optional[dict]:
-    """Create final report"""
+def complete_final_report(user_id: int) -> Optional[dict]:
+    """Mark Complete for final report"""
     with DatabaseManager() as db:
-        return db.create_final_report(user_id, file_url)
+        return db.complete_final_report(user_id)
 
 def get_final_report(user_id: int) -> Optional[dict]:
     """Get final report for a user"""
@@ -807,6 +806,7 @@ class FinalReport(Base):
     user_id = Column(Integer, ForeignKey("user.user_id"), unique=True, nullable=False)
     file_url = Column(Text, nullable=False)  # Azure Storage URL
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp(), nullable=False)
+    completed_at = Column(TIMESTAMP)
     
     def __repr__(self):
         return f"<FinalReport(id={self.id}, user_id={self.user_id}, file_url='{self.file_url}')>"

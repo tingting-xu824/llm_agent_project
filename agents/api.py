@@ -16,7 +16,7 @@ from agents.database import (
     update_evaluation_record_async,
     complete_evaluation_round_async,
     check_previous_round_completed_async,
-    create_final_report_async,
+    complete_final_report,
     get_final_report_async,
     update_final_report_file_url_async,
     add_interview_message_async,
@@ -230,18 +230,9 @@ class UserLogin(BaseModel):
     email: EmailStr
     date_of_birth: date
 
-class InterviewInit(BaseModel):
-    """Interview initialization model"""
-    user_id: int
-
 class InterviewChat(BaseModel):
     """Interview chat model"""
-    user_id: int
-    user_message: str
-
-class InterviewHistory(BaseModel):
-    """Interview history request model"""
-    user_id: int
+    message: str
 
 class EvaluationSubmission(BaseModel):
     """Evaluation submission model for problem and solution"""
@@ -1080,21 +1071,11 @@ async def add_interview_message(user_id: int, role: str, content: str):
     await save_interview_chat_history(user_id, history)
 
 @app.post("/interview/init")
-async def initialize_interview(request: InterviewInit, current_user: Dict = Depends(get_current_user)):
+async def initialize_interview(current_user: Dict = Depends(get_current_user)):
     """Initialize a chat session for an interview"""
     try:
-        user_id = request.user_id
-        
-        # Verify the user_id matches the authenticated user
-        if user_id != current_user["user_id"]:
-            raise HTTPException(status_code=403, detail="User ID mismatch")
-        
-        # Check if user exists
-        from agents.database import get_user_profile_async
-        user_profile = await get_user_profile_async(user_id)
-        if not user_profile:
-            raise HTTPException(status_code=404, detail="User not found")
-        
+        user_id = current_user["user_id"]
+
         # Initialize interview session
         session_data = {
             "user_id": user_id,
@@ -1114,7 +1095,6 @@ async def initialize_interview(request: InterviewInit, current_user: Dict = Depe
         
         return {
             "response": initial_question,
-            "interview_id": user_id  # 使用user_id作为interview标识
         }
         
     except HTTPException:
@@ -1126,13 +1106,9 @@ async def initialize_interview(request: InterviewInit, current_user: Dict = Depe
 async def interview_chat(request: InterviewChat, current_user: Dict = Depends(get_current_user)):
     """Send a user message to the Interview Bot and receive the assistant's reply"""
     try:
-        user_id = request.user_id
-        user_message = request.user_message
-        
-        # Verify the user_id matches the authenticated user
-        if user_id != current_user["user_id"]:
-            raise HTTPException(status_code=403, detail="User ID mismatch")
-        
+        user_message = request.message
+        user_id = current_user["user_id"]
+
         # Check if interview session exists
         session = await get_interview_session(user_id)
         if not session or session.get("status") != "active":
@@ -1231,15 +1207,11 @@ async def interview_chat(request: InterviewChat, current_user: Dict = Depends(ge
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to process interview chat: {str(e)}")
 
-@app.post("/interview/history")
-async def get_interview_history(request: InterviewHistory, current_user: Dict = Depends(get_current_user)):
+@app.get("/interview/history")
+async def get_interview_history(current_user: Dict = Depends(get_current_user)):
     """Retrieve the chat history for the interview"""
     try:
-        user_id = request.user_id
-        
-        # Verify the user_id matches the authenticated user
-        if user_id != current_user["user_id"]:
-            raise HTTPException(status_code=403, detail="User ID mismatch")
+        user_id = current_user["user_id"]
         
         # Get interview chat history
         chat_history = await get_interview_chat_history(user_id)
@@ -1256,77 +1228,27 @@ async def get_interview_history(request: InterviewHistory, current_user: Dict = 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get interview history: {str(e)}")
 
-@app.post("/report/submit")
+@app.post("/report/complete")
 async def submit_final_report(
-    file: UploadFile = File(...),
     current_user: Dict = Depends(get_current_user)
 ):
     """
-    Submit final report file
-    
-    This endpoint:
-    1. Validates the file
-    2. Uploads file to Azure Storage
-    3. Saves file URL to database
-    4. Returns success response with file URL
+    Completes the report to finalize everything
     """
     user_id = current_user["user_id"]
     
     try:
-        # Check if user already has a report
-        existing_report = await get_final_report_async(user_id)
-        if existing_report:
-            raise HTTPException(
-                status_code=400,
-                detail="User already has a submitted report"
-            )
-        
-        # Validate file type
-        allowed_extensions = ['.pdf', '.doc', '.docx', '.txt']
-        file_extension = os.path.splitext(file.filename)[1].lower()
-        
-        if file_extension not in allowed_extensions:
-            raise HTTPException(
-                status_code=400,
-                detail=f"File type not allowed. Allowed types: {', '.join(allowed_extensions)}"
-            )
-        
-        # Validate file size (max 10MB)
-        max_size = 10 * 1024 * 1024  # 10MB
-        file_content = await file.read()
-        
-        if len(file_content) > max_size:
-            raise HTTPException(
-                status_code=400,
-                detail="File size too large. Maximum size is 10MB"
-            )
-        
-        # Upload to Azure Storage
-        file_url = azure_storage.upload_file(file_content, file.filename, user_id)
-        
-        if not file_url:
-            raise HTTPException(
-                status_code=500,
-                detail="Failed to upload file to storage"
-            )
-        
-        # Create report in database
-        report_data = await create_final_report_async(
-            user_id=user_id,
-            file_url=file_url
-        )
+        report_data = complete_final_report(user_id)
         
         if not report_data:
             raise HTTPException(
-                status_code=500,
+                status_code=404,
                 detail="Failed to save report to database"
             )
         
         return {
             "message": "Final report submitted successfully",
-            "report_id": report_data["id"],
-            "file_url": file_url,
-            "submitted_at": report_data["created_at"]
+            "completed_at": report_data["completed_at"]
         }
         
     except HTTPException:
@@ -1338,7 +1260,7 @@ async def submit_final_report(
             detail="Internal server error occurred while processing report submission"
         )
 
-@app.get("/report/get")
+@app.get("/report")
 async def get_final_report(current_user: Dict = Depends(get_current_user)):
     """
     Get final report for the authenticated user
