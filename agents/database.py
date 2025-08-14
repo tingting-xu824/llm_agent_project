@@ -841,7 +841,7 @@ class InterviewEvaluation(Base):
         return f"<InterviewEvaluation(eval_id={self.eval_id}, user_id={self.user_id})>"
 
 # Interview-related database operations
-def add_interview_message(user_id: int, content_type: str, content: str, is_end: bool = False) -> Optional[int]:
+def add_interview_message(user_id: int, content_type: str, content: str, is_end: bool = False):
     """Add a new interview message"""
     with DatabaseManager() as db:
         try:
@@ -854,7 +854,7 @@ def add_interview_message(user_id: int, content_type: str, content: str, is_end:
             db.db.add(interview_message)
             db.db.commit()
             db.db.refresh(interview_message)
-            return interview_message.message_id
+            return interview_message
         except Exception as e:
             db.db.rollback()
             print(f"Error adding interview message: {e}")
@@ -964,7 +964,7 @@ def check_interview_completed(user_id: int) -> bool:
             return False
 
 # Async versions of interview functions
-async def add_interview_message_async(user_id: int, content_type: str, content: str, is_end: bool = False) -> Optional[int]:
+async def add_interview_message_async(user_id: int, content_type: str, content: str, is_end: bool = False):
     """Add a new interview message using thread pool"""
     import asyncio
     loop = asyncio.get_event_loop()

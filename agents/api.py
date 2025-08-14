@@ -1168,7 +1168,7 @@ async def interview_chat(request: InterviewChat, current_user: Dict = Depends(ge
         response, is_end = parse_ai_response(ai_response)
         
         # Add AI response to database
-        await add_interview_message_async(user_id, "Questions", response, is_end)
+        added_message = await add_interview_message_async(user_id, "Questions", response, is_end)
         
         # Update Redis cache with latest history from database
         db_messages = await get_interview_messages_async(user_id)
@@ -1229,7 +1229,9 @@ async def interview_chat(request: InterviewChat, current_user: Dict = Depends(ge
             pass
         
         return {
-            "response": response
+            "content": response,
+            "role": "assistant",
+            "timestamp": added_message.created_at if added_message else None
         }
         
     except HTTPException:
@@ -1243,6 +1245,10 @@ async def get_interview_history(current_user: Dict = Depends(get_current_user)):
     try:
         user_id = current_user["user_id"]
         
+        session = await get_interview_session(user_id)
+        if not session or session.get("status") != "active":
+            raise HTTPException(status_code=400, detail="No active interview session found. Please initialize the interview first.")
+      
         # Get interview chat history
         chat_history = await get_interview_chat_history(user_id)
         
