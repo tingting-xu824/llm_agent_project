@@ -32,8 +32,6 @@ class MemorySystem:
         
         # Initialize memory manager if database is available
         if self.database_url:
-            logger.info(f"DATABASE_URL found, length: {len(self.database_url)}")
-            logger.info(f"DATABASE_URL starts with: {self.database_url[:20]}...")
             try:
                 self.memory_manager = MemoryManager(
                     database_url=self.database_url,
@@ -49,9 +47,6 @@ class MemorySystem:
                 self.fallback_mode = True
                 self._notify_admin(f"Memory system operating in fallback mode: {e}", "WARNING")
         else:
-            logger.warning("No DATABASE_URL found. Memory system will operate in fallback mode")
-            logger.warning("Available environment variables containing 'DATABASE': " + 
-                         str([k for k in os.environ.keys() if 'DATABASE' in k.upper()]))
             self.fallback_mode = True
             self._notify_admin("Memory system operating in fallback mode: No DATABASE_URL", "WARNING")
 
