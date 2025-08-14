@@ -977,6 +977,108 @@ async def get_user_profile_endpoint(current_user: Dict = Depends(get_current_use
 interview_sessions = {}
 interview_chat_history = {}
 
+@app.get("/debug/db")
+async def debug_database():
+    """Debug endpoint to test database connection"""
+    import os
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.exc import SQLAlchemyError
+    
+    database_url = os.getenv("DATABASE_URL")
+    if not database_url:
+        return {"error": "DATABASE_URL not found"}
+    
+    try:
+        # Test basic connection
+        engine = create_engine(database_url)
+        with engine.connect() as conn:
+            # Test simple query
+            result = conn.execute(text("SELECT 1 as test"))
+            test_result = result.fetchone()
+            
+            # Test if memory_vectors table exists
+            result = conn.execute(text("""
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables 
+                    WHERE table_name = 'memory_vectors'
+                ) as table_exists
+            """))
+            table_exists = result.fetchone()[0]
+            
+            # Test if we can query memory_vectors table
+            memory_count = 0
+            if table_exists:
+                result = conn.execute(text("SELECT COUNT(*) FROM memory_vectors"))
+                memory_count = result.fetchone()[0]
+            
+            # Test if pgvector extension is available
+            result = conn.execute(text("""
+                SELECT EXISTS (
+                    SELECT FROM pg_extension 
+                    WHERE extname = 'vector'
+                ) as vector_extension_exists
+            """))
+            vector_extension_exists = result.fetchone()[0]
+            
+            return {
+                "status": "success",
+                "connection_test": "passed",
+                "test_query_result": test_result[0],
+                "memory_vectors_table_exists": table_exists,
+                "memory_vectors_count": memory_count,
+                "pgvector_extension_exists": vector_extension_exists,
+                "database_url_length": len(database_url),
+                "database_url_starts_with": database_url[:30] + "..."
+            }
+            
+    except SQLAlchemyError as e:
+        return {
+            "status": "error",
+            "error_type": "SQLAlchemyError",
+            "error_message": str(e),
+            "database_url_length": len(database_url) if database_url else 0
+        }
+    except Exception as e:
+        return {
+            "status": "error", 
+            "error_type": "GeneralError",
+            "error_message": str(e),
+            "database_url_length": len(database_url) if database_url else 0
+                }
+
+@app.get("/debug/memory")
+async def debug_memory_system():
+    """Debug endpoint to test memory system status"""
+    from .memory_system import memory_system
+    
+    try:
+        # Get memory system status
+        status = memory_system.get_status()
+        
+        # Test memory manager connection if available
+        memory_manager_status = "not_available"
+        if memory_system.memory_manager:
+            try:
+                # Test a simple database operation
+                test_count = memory_system.memory_manager.get_user_memory_count(0)
+                memory_manager_status = f"available (test_count: {test_count})"
+            except Exception as e:
+                memory_manager_status = f"error: {str(e)}"
+        
+        return {
+            "memory_system_status": status,
+            "memory_manager_status": memory_manager_status,
+            "fallback_mode": memory_system.fallback_mode,
+            "error_count": memory_system.error_count,
+            "last_error": memory_system.last_error
+        }
+        
+    except Exception as e:
+        return {
+            "error": "Failed to get memory system status",
+            "error_message": str(e)
+        }
+
 def get_interview_session_key(user_id: int) -> str:
     """Generate key for interview session"""
     return f"interview_session:{user_id}"
