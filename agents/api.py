@@ -1245,6 +1245,10 @@ async def get_interview_history(current_user: Dict = Depends(get_current_user)):
     try:
         user_id = current_user["user_id"]
 
+        session = await get_interview_session(user_id)
+        if not session or session.get("status") != "active":
+            raise HTTPException(status_code=400, detail="No active interview session found. Please initialize the interview first.")
+
         # Get interview chat history
         chat_history = await get_interview_chat_history(user_id)
         
