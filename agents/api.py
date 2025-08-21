@@ -37,6 +37,77 @@ from .memory_system import memory_system
 from fastapi import Query
 from sqlalchemy import Column
 
+# Interview-specific helper functions
+def parse_rating_response(user_message: str) -> tuple[bool, Optional[int]]:
+    """Check if user input is a rating (1-5)"""
+    try:
+        rating = int(user_message.strip())
+        return (True, rating) if 1 <= rating <= 5 else (False, None)
+    except:
+        return False, None
+
+def determine_interview_phase(db_messages: List[Dict]) -> str:
+    """Determine current interview phase based on message history"""
+    if not db_messages:
+        return "conversation"
+    
+    ai_messages = [msg for msg in db_messages if msg["content_type"] == "Questions"]
+    if not ai_messages:
+        return "conversation"
+    
+    last_ai_message = ai_messages[-1]["content"]
+    
+    if "How well does the summary" in last_ai_message:
+        return "summary_rating"
+    elif "AI interviewer" in last_ai_message and "human interviewer" in last_ai_message:
+        return "interview_rating"
+    else:
+        return "conversation"
+
+def is_first_summary_message(response: str) -> bool:
+    """Check if this is the first summary message (not closing statement)"""
+    summary_indicators = [
+        "summary of the answers", "detailed summary", "In summary",
+        "overall experience", "The participant mentioned", "During the interview",
+        "participant described", "participant expressed"
+    ]
+    closing_indicators = [
+        "Thank you for participating", "The interview concludes here", "B2G-EVALUATION"
+    ]
+    
+    has_summary = any(indicator in response.lower() for indicator in summary_indicators)
+    is_closing = any(indicator in response for indicator in closing_indicators)
+    
+    return has_summary and not is_closing
+
+def extract_clean_summary(response: str) -> str:
+    """Extract clean summary text, removing rating questions"""
+    split_points = ["How well does the summary", "Please rate the summary"]
+    
+    clean_summary = response
+    for point in split_points:
+        if point in response:
+            clean_summary = response.split(point)[0].strip()
+            break
+    
+    return clean_summary
+
+async def handle_rating_submission(user_id: int, phase: str, rating_value: int):
+    """Handle user rating submission"""
+    eval_id = await get_or_create_interview_evaluation_async(user_id)
+    
+    if phase == "summary_rating":
+        await update_interview_evaluation_async(eval_id, summary_rate=rating_value)
+    elif phase == "interview_rating":
+        await update_interview_evaluation_async(eval_id, interview_rate=rating_value)
+        
+        # Interview completely finished, update session status
+        session = await get_interview_session(user_id)
+        if session:
+            session["status"] = "completed"
+            session["completed_at"] = datetime.utcnow().isoformat()
+            await save_interview_session(user_id, session)
+
 # Interview-specific error handling functions
 async def run_interview_agent_with_retry(user_id: int, user_message: str, history: list[tuple[str, str]], model: str, max_retries: int = 3):
     """Execute interview agent with retry mechanism"""
@@ -975,15 +1046,13 @@ async def get_user_profile_endpoint(current_user: Dict = Depends(get_current_use
 
 # Interview-related storage (in-memory for now, can be moved to database later)
 interview_sessions = {}
-interview_chat_history = {}
+# Removed: interview_chat_history - no longer needed as we use direct database access
 
 def get_interview_session_key(user_id: int) -> str:
     """Generate key for interview session"""
     return f"interview_session:{user_id}"
 
-def get_interview_history_key(user_id: int) -> str:
-    """Generate key for interview chat history"""
-    return f"interview_history:{user_id}"
+# Removed: get_interview_history_key - no longer needed as we use direct database access
 
 async def get_interview_session(user_id: int) -> Dict:
     """Get interview session for user"""
@@ -1022,64 +1091,7 @@ async def save_interview_session(user_id: int, session_data: Dict):
     
     interview_sessions[user_id] = session_data
 
-async def get_interview_chat_history(user_id: int) -> List[Dict]:
-    """Get interview chat history for user from database"""
-    try:
-        # Get messages from database
-        db_messages = await get_interview_messages_async(user_id)
-        
-        # Convert database messages to chat history format
-        chat_history = []
-        for msg in db_messages:
-            chat_history.append({
-                "role": "assistant" if msg["content_type"] == "Questions" else "user",
-                "content": msg["content"],
-                "timestamp": msg["created_at"].isoformat() if msg["created_at"] else datetime.utcnow().isoformat()
-            })
-        
-        return chat_history
-    except Exception as e:
-        print(f"Error getting interview chat history from database: {e}")
-        # Fallback to Redis if database fails
-        if redis_client:
-            try:
-                history_key = get_interview_history_key(user_id)
-                history_data = await redis_client.get(history_key)
-                if history_data:
-                    return json.loads(history_data)
-            except Exception as redis_e:
-                print(f"Redis fallback also failed: {redis_e}")
-        
-        return interview_chat_history.get(user_id, [])
-
-async def save_interview_chat_history(user_id: int, history: List[Dict]):
-    """Save interview chat history for user"""
-    if redis_client:
-        try:
-            history_key = get_interview_history_key(user_id)
-            await redis_client.setex(history_key, 86400, json.dumps(history))  # 24 hour expiration
-            return
-        except aioredis.ConnectionError as e:
-            print(f"Redis connection error saving interview history: {e}")
-        except aioredis.RedisError as e:
-            print(f"Redis error saving interview history: {e}")
-        except json.JSONEncodeError as e:
-            print(f"JSON encode error in interview history: {e}")
-        except Exception as e:
-            print(f"Unexpected error saving interview history to Redis: {e}")
-    
-    interview_chat_history[user_id] = history
-
-async def add_interview_message(user_id: int, role: str, content: str):
-    """Add a message to interview chat history"""
-    history = await get_interview_chat_history(user_id)
-    message = {
-        "role": role,
-        "content": content,
-        "timestamp": datetime.utcnow().isoformat()
-    }
-    history.append(message)
-    await save_interview_chat_history(user_id, history)
+# Removed Redis-based interview chat history functions - now using direct database access
 
 @app.post("/interview/init")
 async def initialize_interview(current_user: Dict = Depends(get_current_user)):
@@ -1104,14 +1116,6 @@ async def initialize_interview(current_user: Dict = Depends(get_current_user)):
         # Add initial question to database
         await add_interview_message_async(user_id, "Questions", initial_question, is_end)
         
-        # Also save to Redis cache for immediate access
-        initial_message = {
-            "role": "assistant",
-            "content": initial_question,
-            "timestamp": datetime.utcnow().isoformat()
-        }
-        await save_interview_chat_history(user_id, [initial_message])
-        
         return {
             "response": initial_question,
         }
@@ -1133,27 +1137,27 @@ async def interview_chat(request: InterviewChat, current_user: Dict = Depends(ge
         if not session or session.get("status") != "active":
             raise HTTPException(status_code=400, detail="No active interview session found. Please initialize the interview first.")
         
-        # Check if this is a rating response (1-5)
-        is_rating = False
-        rating_value = None
-        try:
-            # Try to parse as integer and check if it's 1-5
-            rating = int(user_message.strip())
-            if 1 <= rating <= 5:
-                is_rating = True
-                rating_value = rating
-        except (ValueError, AttributeError):
-            # User input is not a valid number, leave rating as None
-            is_rating = False
-            rating_value = None
+        # Parse user input to check if it's a rating
+        is_rating, rating_value = parse_rating_response(user_message)
         
-        # Add user message to database
-        await add_interview_message_async(user_id, "Answers", user_message, False)
-        
-        # Get interview history from database for context
+        # Get interview history from database for phase determination and AI context
         db_messages = await get_interview_messages_async(user_id)
+        current_phase = determine_interview_phase(db_messages)
         
-        # Convert database messages to conversation history format
+        # Handle rating submissions - don't write to InterviewMessage, directly update evaluation
+        if current_phase in ["summary_rating", "interview_rating"] and is_rating:
+            await handle_rating_submission(user_id, current_phase, rating_value)
+            return {
+                "content": "Thank you for your rating.",
+                "role": "system",
+                "timestamp": datetime.utcnow().isoformat()
+            }
+        
+        # Only add user message to database if it's not a rating in evaluation phase
+        if current_phase == "conversation" and not is_rating:
+            await add_interview_message_async(user_id, "Answers", user_message, False)
+        
+        # Convert database messages to conversation history format for AI
         history = []
         for msg in db_messages:
             if msg["content_type"] == "Questions":
@@ -1167,71 +1171,37 @@ async def interview_chat(request: InterviewChat, current_user: Dict = Depends(ge
         # Parse JSON response with improved error handling
         response, is_end = parse_ai_response(ai_response)
         
-        # Add AI response to database
-        added_message = await add_interview_message_async(user_id, "Questions", response, is_end)
-        
-        # Update Redis cache with latest history from database
-        db_messages = await get_interview_messages_async(user_id)
-        chat_history = []
-        for msg in db_messages:
-            chat_history.append({
-                "role": "assistant" if msg["content_type"] == "Questions" else "user",
-                "content": msg["content"],
-                "timestamp": msg["created_at"].isoformat() if msg["created_at"] else datetime.utcnow().isoformat()
-            })
-        await save_interview_chat_history(user_id, chat_history)
-        
-        # Handle evaluation phase
-        if is_end:
-            # Check if this is the summary phase
-            if "summary" in response.lower() and "rate" in response.lower():
-                # Create or get evaluation record for summary
-                eval_id = await get_or_create_interview_evaluation_async(user_id)
-                # Extract summary text (everything before the rating question)
-                summary_text = response.split("How well does the summary")[0].strip()
-                await update_interview_evaluation_async(eval_id, summary_text=summary_text)
+        # Smart handling of AI responses based on is_end and content
+        if is_end and is_first_summary_message(response):
+            # This is the AI summary - store in InterviewEvaluation table
+            summary_text = extract_clean_summary(response)
+            eval_id = await get_or_create_interview_evaluation_async(user_id)
+            await update_interview_evaluation_async(eval_id, summary_text=summary_text)
             
-            # Check if this is the final rating question
-            elif "AI interviewer" in response and "human interviewer" in response:
-                # This is the final interview rating question
-                # The summary_rate will be updated when user responds to this
-                pass
+            # Still record the rating question part in InterviewMessage for conversation flow
+            rating_question = "How well does the summary of our discussion describe your answers: 1 (poorly), 2 (partially), 3 (well), 4 (very well), 5 (perfectly). Please only reply with the associated number."
+            await add_interview_message_async(user_id, "Questions", rating_question, True)
             
-            # Check if this is the final closing message
-            elif "Thank you for participating" in response:
-                # Mark session as completed
-                session["status"] = "completed"
-                session["completed_at"] = datetime.utcnow().isoformat()
-                await save_interview_session(user_id, session)
-        
-        # Handle rating responses
-        if is_rating and rating_value is not None:
-            # Get the last AI message to determine which rating this is
-            db_messages = await get_interview_messages_async(user_id)
-            ai_messages = [msg for msg in db_messages if msg["content_type"] == "Questions"]
+        elif is_end and ("AI interviewer" in response and "human interviewer" in response):
+            # Final rating question
+            await add_interview_message_async(user_id, "Questions", response, True)
             
-            if ai_messages:
-                last_ai_message = ai_messages[-1]["content"]
-                
-                # Check if this is summary rating
-                if "How well does the summary" in last_ai_message:
-                    eval_id = await get_or_create_interview_evaluation_async(user_id)
-                    await update_interview_evaluation_async(eval_id, summary_rate=rating_value)
-                
-                # Check if this is interview rating
-                elif "AI interviewer" in last_ai_message and "human interviewer" in last_ai_message:
-                    eval_id = await get_or_create_interview_evaluation_async(user_id)
-                    await update_interview_evaluation_async(eval_id, interview_rate=rating_value)
+        elif is_end and "Thank you for participating" in response:
+            # Closing statement
+            await add_interview_message_async(user_id, "Questions", response, True)
+            # Mark session as completed
+            session["status"] = "completed"
+            session["completed_at"] = datetime.utcnow().isoformat()
+            await save_interview_session(user_id, session)
+            
         else:
-            # User input is not a valid rating, but we still need to handle the case
-            # where AI expects a rating but user provides invalid input
-            # In this case, we don't update any rating fields, leaving them as NULL in database
-            pass
+            # Normal interview questions
+            await add_interview_message_async(user_id, "Questions", response, is_end)
         
         return {
             "content": response,
             "role": "assistant",
-            "timestamp": added_message.created_at if added_message else None
+            "timestamp": datetime.utcnow().isoformat()
         }
         
     except HTTPException:
@@ -1246,14 +1216,24 @@ async def get_interview_history(current_user: Dict = Depends(get_current_user)):
         user_id = current_user["user_id"]
 
         session = await get_interview_session(user_id)
-        if not session or session.get("status") != "active":
-            raise HTTPException(status_code=400, detail="No active interview session found. Please initialize the interview first.")
+        if not session:
+            raise HTTPException(status_code=400, detail="No interview session found. Please initialize the interview first.")
 
-        # Get interview chat history
-        chat_history = await get_interview_chat_history(user_id)
+        # Get interview chat history directly from database
+        db_messages = await get_interview_messages_async(user_id)
         
-        if not chat_history:
+        if not db_messages:
             raise HTTPException(status_code=404, detail="No interview history found for this user")
+        
+        # Convert database messages to chat history format
+        chat_history = [
+            {
+                "role": "assistant" if msg["content_type"] == "Questions" else "user",
+                "content": msg["content"],
+                "timestamp": msg["created_at"].isoformat() if msg["created_at"] else datetime.utcnow().isoformat()
+            }
+            for msg in db_messages
+        ]
         
         return {
             "chat_history": chat_history
