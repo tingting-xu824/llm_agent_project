@@ -931,12 +931,17 @@ Please respond to the current message while considering the above context."""
             from agents.database import get_user_message_count_async
             message_count = await get_user_message_count_async(user_id, input.mode)
             
-            # Check user inactivity status
+            # Check user inactivity status with database-based detection
             last_activity = await get_user_last_request_time_async(user_id)
             inactivity_detected = False
+            inactivity_duration = 0
+            
             if last_activity and memory_system.memory_manager:
                 time_diff = (datetime.utcnow() - last_activity).total_seconds()
-                inactivity_detected = time_diff > memory_system.memory_manager.inactivity_threshold
+                inactivity_duration = int(time_diff)
+                
+                # Check against medium threshold (15 minutes) for inactivity detection
+                inactivity_detected = time_diff >= memory_system.memory_manager.medium_inactivity_threshold
             
             # Check memory triggers (only for chat mode)
             should_create_memory, triggers = await memory_system.check_memory_trigger(
@@ -944,6 +949,7 @@ Please respond to the current message while considering the above context."""
                 input.mode, 
                 message_count=message_count,
                 inactivity_detected=inactivity_detected,
+                inactivity_duration=inactivity_duration,
                 round_completed=False  # Not used for chat mode
             )
             
