@@ -817,26 +817,9 @@ async def complete_evaluation_round(
             )
         
         # Trigger memory creation for completed evaluation round
-        try:
-            # Get user's agent type for memory creation
-            user_profile = current_user
-            agent_type = user_profile.get("agent_type", 1) if user_profile else 1
-            
-            # Check memory triggers for eval mode (round completion)
-            should_create_memory, triggers = await memory_system.check_memory_trigger(
-                user_id, 
-                "eval", 
-                round_completed=True
-            )
-            
-            # Create memory asynchronously if triggers are met
-            if should_create_memory:
-                await memory_system.create_memory_async(user_id, "eval", triggers, agent_type)
-                print(f"Evaluation memory created for user {user_id}, round {round} with triggers: {triggers}")
-                
-        except Exception as e:
-            print(f"Error in evaluation memory creation: {e}")
-            # Continue execution even if memory creation fails
+        # Note: Removed memory creation for eval mode 
+        # Eval data is stored in idea_evaluation table and can be directly queried
+        # Memory system is only used for chat mode where conversations are longer
         
         # Prepare response message
         if round == 4:
@@ -895,18 +878,42 @@ async def post_agent(input: ChatInput, current_user: Dict = Depends(get_current_
     # Store user message in database
     await save_conversation_message_async(user_id, user_msg, "user", input.mode, agent_type)
     
-    # Get relevant memories for RAG
-    memory_context = await memory_system.create_memory_context(user_id, user_msg, top_k=3)
+    # For chat mode, get eval context as foundation
+    eval_context = ""
+    if input.mode == "chat":
+        from agents.database import get_eval_final_round_async
+        final_round = await get_eval_final_round_async(user_id)
+        if final_round:
+            eval_context = f"""Based on your previous evaluation session (Round {final_round['round']}):
+
+Problem you identified: {final_round['problem']}
+
+Your solution: {final_round['solution']}
+
+Let's continue developing this idea further..."""
+
+    # Get relevant memories for RAG (only used for longer chat conversations)
+    memory_context = ""
+    if input.mode == "chat":
+        memory_context = await memory_system.create_memory_context(user_id, user_msg, top_k=3)
     
-    # Prepare enhanced prompt with memory context
+    # Prepare enhanced prompt with eval and memory context
     enhanced_prompt = user_msg
+    contexts = []
+    
+    if eval_context:
+        contexts.append(f"Foundation from evaluation phase:\n{eval_context}")
+    
     if memory_context:
-        enhanced_prompt = f"""Previous relevant context from our conversations:
-{memory_context}
+        contexts.append(f"Recent conversation context:\n{memory_context}")
+    
+    if contexts:
+        context_string = "\n\n".join(contexts)
+        enhanced_prompt = f"""{context_string}
 
 Current message: {user_msg}
 
-Please respond to the current message while considering the relevant context from our previous conversations."""
+Please respond to the current message while considering the above context."""
     
     # Add to immediate history for agent
     history.append(("User", enhanced_prompt))
@@ -917,55 +924,37 @@ Please respond to the current message while considering the relevant context fro
     # Store agent reply in database
     await save_conversation_message_async(user_id, agent_reply, "assistant", input.mode, agent_type)
     
-    # Check memory triggers and create memory if needed
-    try:
-        # Get message count for this user in current mode
-        from agents.database import get_user_message_count_async
-        message_count = await get_user_message_count_async(user_id, input.mode)
-        
-        # Check user inactivity status
-        last_activity = await get_user_last_request_time_async(user_id)
-        inactivity_detected = False
-        if last_activity and memory_system.memory_manager:
-            time_diff = (datetime.utcnow() - last_activity).total_seconds()
-            inactivity_detected = time_diff > memory_system.memory_manager.inactivity_threshold
-        
-        # For eval mode, check current round completion status
-        round_completed = False
-        if input.mode == "eval":
-            from agents.database import get_evaluation_data_async
-            # Get all evaluation records for the user
-            eval_data = await get_evaluation_data_async(user_id)
-            if eval_data:
-                # Find the current active round (the one that's not completed)
-                current_round_record = None
-                for record in eval_data:
-                    if record.completed_at is None:
-                        current_round_record = record
-                        break
-                
-                # If no active round found, check if the latest round is completed
-                if current_round_record is None and eval_data:
-                    latest_record = max(eval_data, key=lambda x: x.round)
-                    round_completed = latest_record.completed_at is not None
-        
-        # Check memory triggers
-        should_create_memory, triggers = await memory_system.check_memory_trigger(
-            user_id, 
-            input.mode, 
-            message_count=message_count,
-            inactivity_detected=inactivity_detected,
-            round_completed=round_completed
-        )
-        
-        # Create memory asynchronously if triggers are met
-        if should_create_memory:
-            await memory_system.create_memory_async(user_id, input.mode, triggers, agent_type)
-            print(f"Memory created for user {user_id} with triggers: {triggers}")
+    # Check memory triggers and create memory if needed (only for chat mode)
+    if input.mode == "chat":
+        try:
+            # Get message count for this user in current mode
+            from agents.database import get_user_message_count_async
+            message_count = await get_user_message_count_async(user_id, input.mode)
             
-    except Exception as e:
-        print(f"Error in memory trigger check: {e}")
-        # Continue execution even if memory creation fails
+            # Check user inactivity status
+            last_activity = await get_user_last_request_time_async(user_id)
+            inactivity_detected = False
+            if last_activity and memory_system.memory_manager:
+                time_diff = (datetime.utcnow() - last_activity).total_seconds()
+                inactivity_detected = time_diff > memory_system.memory_manager.inactivity_threshold
+            
+            # Check memory triggers (only for chat mode)
+            should_create_memory, triggers = await memory_system.check_memory_trigger(
+                user_id, 
+                input.mode, 
+                message_count=message_count,
+                inactivity_detected=inactivity_detected,
+                round_completed=False  # Not used for chat mode
+            )
+            
+            # Create memory asynchronously if triggers are met
+            if should_create_memory:
+                await memory_system.create_memory_async(user_id, input.mode, triggers, agent_type)
+                print(f"Chat memory created for user {user_id} with triggers: {triggers}")
+                
+        except Exception as e:
+            print(f"Error in chat memory trigger check: {e}")
+            # Continue execution even if memory creation fails
     
     # Update immediate history for Redis
     history.append(("Assistant", agent_reply))

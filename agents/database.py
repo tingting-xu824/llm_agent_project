@@ -698,6 +698,38 @@ async def get_user_by_email_and_dob_async(email: str, date_of_birth: date) -> Op
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, get_user_by_email_and_dob, email, date_of_birth)
 
+def get_eval_final_round(user_id: int) -> Optional[Dict]:
+    """Get user's final (highest round number) evaluation record"""
+    with DatabaseManager() as db:
+        try:
+            # Get the evaluation with the highest round number for this user
+            final_eval = db.db.query(IdeaEvaluation).filter(
+                IdeaEvaluation.user_id == user_id
+            ).order_by(IdeaEvaluation.round.desc()).first()
+            
+            if final_eval:
+                return {
+                    "id": final_eval.id,
+                    "user_id": final_eval.user_id,
+                    "problem": final_eval.problem,
+                    "solution": final_eval.solution,
+                    "ai_feedback": final_eval.ai_feedback,
+                    "round": final_eval.round,
+                    "created_at": final_eval.created_at,
+                    "time_remaining": final_eval.time_remaining,
+                    "completed_at": final_eval.completed_at
+                }
+            return None
+        except Exception as e:
+            print(f"Error getting final evaluation round: {e}")
+            return None
+
+async def get_eval_final_round_async(user_id: int) -> Optional[Dict]:
+    """Get user's final evaluation round using thread pool"""
+    import asyncio
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, get_eval_final_round, user_id)
+
 # Batch operations for true optimization (when multiple operations need to be executed together)
 async def execute_db_operations_batch(operations: List[tuple]) -> List[Any]:
     """
