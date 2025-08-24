@@ -329,11 +329,20 @@ class MemoryManager:
                 cursor.execute("""
                     SELECT conversation_id, message_type, content, timestamp, sequence_number
                     FROM conversation 
-                    WHERE user_id = %s 
+                    WHERE user_id = %s AND mode = 'chat'
                     ORDER BY timestamp DESC 
                     LIMIT %s
                 """, (user_id, limit))
-                return cursor.fetchall()
+                
+                conversations = cursor.fetchall()
+                
+                # Debug logging to verify conversation_id extraction
+                logger.debug(f"Retrieved {len(conversations)} chat conversations for user {user_id}")
+                if conversations:
+                    conversation_ids = [c['conversation_id'] for c in conversations]
+                    logger.debug(f"Extracted conversation_ids: {conversation_ids}")
+                
+                return conversations
         except Exception as e:
             logger.error(f"Failed to get conversations for user {user_id}: {e}")
             return []
@@ -703,10 +712,16 @@ class MemoryManager:
                 "created_by": "system"
             }
             
+            # Extract conversation IDs and create source_conversations string
+            conversation_ids = [c['conversation_id'] for c in conversations]
+            source_conversations = json.dumps(conversation_ids)
+            
+            logger.debug(f"Creating memory for user {user_id} with source_conversations: {source_conversations}")
+            
             # Store memory (now synchronous, run in thread pool)
             loop = asyncio.get_event_loop()
             memory_id = await loop.run_in_executor(None, self.store_memory,
-                user_id, memory_type, json.dumps([c['conversation_id'] for c in conversations]),
+                user_id, memory_type, source_conversations,
                 memory_content, embedding, metadata
             )
             
@@ -744,10 +759,16 @@ class MemoryManager:
                 "data_source": "idea_evaluation"
             }
             
+            # Extract evaluation IDs and create source_conversations string
+            evaluation_ids = [e['id'] for e in evaluations]
+            source_conversations = json.dumps(evaluation_ids)
+            
+            logger.debug(f"Creating eval memory for user {user_id} with source_conversations: {source_conversations}")
+            
             # Store memory (now synchronous, run in thread pool)
             loop = asyncio.get_event_loop()
             memory_id = await loop.run_in_executor(None, self.store_memory,
-                user_id, memory_type, json.dumps([e['id'] for e in evaluations]),
+                user_id, memory_type, source_conversations,
                 memory_content, embedding, metadata
             )
             
