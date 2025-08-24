@@ -9,6 +9,7 @@ python-multipart>=0.0.6
 # Database dependencies
 psycopg2-binary>=2.9.0
 sqlalchemy>=2.0.0
+pgvector>=0.2.0
 
 # Caching and session management
 redis>=4.5.0

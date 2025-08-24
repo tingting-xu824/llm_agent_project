@@ -380,28 +380,31 @@ class MemoryManager:
             if not self.validate_vector(embedding):
                 raise ValueError("Invalid embedding vector format")
             
+            logger.debug(f"Attempting to store memory - User: {user_id}, Type: {memory_type}, Embedding size: {len(embedding)}")
+            
             with self.get_db_connection() as conn:
                 cursor = conn.cursor()
                 # Use parameterized query with explicit type casting for safety
                 cursor.execute("""
                     INSERT INTO memory_vectors 
                     (user_id, memory_type, source_conversations, memory_content, embedding, _metadata)
-                    VALUES (%s, %s, %s, %s, %s::VECTOR(1536), %s)
+                    VALUES (%s, %s, %s, %s, %s, %s)
                     RETURNING memory_id
                 """, (
                     user_id,
                     memory_type,
                     source_conversations,
                     memory_content,
-                    self.vector_to_parameterized_sql(embedding),
-                    json.dumps(metadata) if metadata else None
+                    embedding,  # Direct list assignment for Vector type
+                    metadata  # Direct dict assignment for JSON type
                 ))
                 memory_id = cursor.fetchone()[0]
-                logger.info(f"Stored memory {memory_id} for user {user_id}")
+                logger.info(f"Successfully stored memory {memory_id} for user {user_id}, type: {memory_type}")
                 return memory_id
                 
         except Exception as e:
-            logger.error(f"Failed to store memory: {e}")
+            logger.error(f"Failed to store memory for user {user_id}, type {memory_type}: {e}")
+            logger.error(f"Database error details - User: {user_id}, Type: {memory_type}, Content length: {len(memory_content) if memory_content else 0}")
             raise
     
     def store_memory_safe(self, user_id: int, memory_type: str, source_conversations: str,
@@ -418,7 +421,7 @@ class MemoryManager:
                 cursor.execute("""
                     INSERT INTO memory_vectors 
                     (user_id, memory_type, source_conversations, memory_content, embedding, _metadata)
-                    VALUES (%s, %s, %s, %s, %s::VECTOR(1536), %s)
+                    VALUES (%s, %s, %s, %s, %s, %s)
                     RETURNING memory_id
                 """, (
                     user_id,
@@ -426,7 +429,7 @@ class MemoryManager:
                     source_conversations,
                     memory_content,
                     self.vector_to_array(embedding),  # Use array format for maximum safety
-                    json.dumps(metadata) if metadata else None
+                    metadata  # Direct dict assignment for JSON type
                 ))
                 memory_id = cursor.fetchone()[0]
                 logger.info(f"Stored memory {memory_id} for user {user_id}")
@@ -458,15 +461,15 @@ class MemoryManager:
                 
                 cursor.execute("""
                     SELECT memory_id, memory_content, memory_type, _metadata, created_at,
-                           1 - (embedding <=> %s::VECTOR(1536)) as similarity
+                           1 - (embedding <=> %s) as similarity
                     FROM memory_vectors 
                     WHERE user_id = %s
-                    ORDER BY embedding <=> %s::VECTOR(1536)
+                    ORDER BY embedding <=> %s
                     LIMIT %s
                 """, (
-                    self.vector_to_sql(query_embedding),
+                    query_embedding,  # Direct list assignment for Vector type
                     user_id,
-                    self.vector_to_sql(query_embedding),
+                    query_embedding,  # Direct list assignment for Vector type
                     candidate_count
                 ))
                 candidates = cursor.fetchall()
@@ -529,15 +532,15 @@ class MemoryManager:
                 cursor = conn.cursor(cursor_factory=RealDictCursor)
                 cursor.execute("""
                     SELECT memory_id, memory_content, memory_type, _metadata, created_at,
-                           1 - (embedding <=> %s::VECTOR(1536)) as similarity
+                           1 - (embedding <=> %s) as similarity
                     FROM memory_vectors 
                     WHERE user_id = %s
-                    ORDER BY embedding <=> %s::VECTOR(1536)
+                    ORDER BY embedding <=> %s
                     LIMIT %s
                 """, (
-                    self.vector_to_parameterized_sql(query_embedding),
+                    query_embedding,  # Direct list assignment for Vector type
                     user_id,
-                    self.vector_to_parameterized_sql(query_embedding),
+                    query_embedding,  # Direct list assignment for Vector type
                     top_k
                 ))
                 return cursor.fetchall()

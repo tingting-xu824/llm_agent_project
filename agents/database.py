@@ -1,8 +1,9 @@
 from sqlalchemy import create_engine, update, Column, Integer, String, Date, DateTime, Text, TIMESTAMP, BigInteger, ForeignKey, UniqueConstraint, Boolean
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.dialects.postgresql import insert, JSON
 from sqlalchemy.sql import func
+from pgvector.sqlalchemy import Vector
 import os
 from typing import Optional, Dict, List, Any
 from datetime import date
@@ -91,9 +92,9 @@ class MemoryVector(Base):
     memory_type = Column(String(50), nullable=False)  # Type of memory with constraint
     source_conversations = Column(Text)  # Source conversation IDs
     memory_content = Column(Text, nullable=False)  # The text content
-    embedding = Column(Text, nullable=False)  # VECTOR(1536) type for pgvector extension
+    embedding = Column(Vector(1536), nullable=False)  # VECTOR(1536) type for pgvector extension
     created_at = Column(DateTime, default=func.now())
-    _metadata = Column(Text)  # JSONB metadata
+    _metadata = Column(JSON)  # JSONB metadata
 
 class DatabaseManager:
     """Database manager for user operations"""
@@ -317,8 +318,8 @@ class DatabaseManager:
                 user_id=user_id,
                 memory_type="conversation_chunk",  # Use proper memory_type values
                 memory_content=content,
-                embedding=json.dumps(embedding),
-                _metadata=json.dumps(metadata) if metadata else None
+                embedding=embedding,  # Direct assignment for Vector type
+                _metadata=metadata  # Direct assignment for JSON type
             )
             self.db.add(memory_vector)
             self.db.commit()
@@ -347,9 +348,11 @@ class DatabaseManager:
             similarities = []
             for mv in memory_vectors:
                 try:
-                    embedding = json.loads(str(mv.embedding))
-                    similarity = cosine_similarity([query_embedding], [embedding])[0][0]
-                    similarities.append((similarity, mv))
+                    # embedding is now a Vector type, convert to list
+                    embedding = list(mv.embedding) if mv.embedding else []
+                    if len(embedding) > 0:
+                        similarity = cosine_similarity([query_embedding], [embedding])[0][0]
+                        similarities.append((similarity, mv))
                 except Exception as e:
                     print(f"Error calculating similarity: {e}")
                     continue
@@ -362,7 +365,7 @@ class DatabaseManager:
                 {
                     "memory_id": mv.memory_id,
                     "content": mv.memory_content,  # Use memory_content field
-                    "metadata": json.loads(mv._metadata) if mv._metadata else {},
+                    "metadata": mv._metadata if mv._metadata else {},  # Direct access for JSON type
                     "similarity": float(similarity),
                     "created_at": mv.created_at
                 }

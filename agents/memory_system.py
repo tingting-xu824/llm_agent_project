@@ -33,6 +33,7 @@ class MemorySystem:
         # Initialize memory manager if database is available
         if self.database_url:
             try:
+                logger.info(f"Initializing MemoryManager with DATABASE_URL: {self.database_url[:50]}...")
                 self.memory_manager = MemoryManager(
                     database_url=self.database_url,
                     embedding_generator=self._generate_embedding,
@@ -41,6 +42,11 @@ class MemorySystem:
                 )
                 logger.info("MemoryManager initialized successfully")
                 self._notify_admin("Memory system initialized successfully", "INFO")
+            except ImportError as e:
+                logger.error(f"Failed to import required packages (likely pgvector): {e}")
+                self.last_error = str(e)
+                self.fallback_mode = True
+                self._notify_admin(f"Memory system operating in fallback mode - Missing dependencies: {e}", "ERROR")
             except Exception as e:
                 logger.error(f"Failed to initialize MemoryManager: {e}")
                 self.last_error = str(e)
@@ -311,12 +317,14 @@ class MemorySystem:
     async def create_memory_async(self, user_id: int, mode: str, triggers: List[str], agent_type: Optional[int] = None) -> None:
         """Asynchronously create memory from conversations"""
         if not self.memory_manager:
+            logger.warning(f"Memory manager not initialized for user {user_id}, mode: {mode}. System in fallback mode: {self.fallback_mode}")
             return
         
         try:
+            logger.info(f"Creating memory for user {user_id}, mode: {mode}, triggers: {triggers}")
             await self.memory_manager.create_memory_async(user_id, mode, triggers, agent_type)
         except Exception as e:
-            print(f"Error creating memory asynchronously: {e}")
+            logger.error(f"Error creating memory asynchronously for user {user_id}, mode {mode}: {e}")
 
     async def get_memory_count(self, user_id: int) -> int:
         """Get total number of memories stored for a user (async)"""
